@@ -23,6 +23,7 @@ namespace okitsu.net.SimpleToggleGenerator
             public bool exclusiveMode = true;
             public bool allowDisableAll = false;
             public AnimatorControllerParameterType parameterType = AnimatorControllerParameterType.Bool;
+            public string intParameterName = "";
             public List<GameObject> objects = new();
             public bool isFoldout = true;
             public List<bool> isSettingsFoldout = new();
@@ -82,7 +83,11 @@ namespace okitsu.net.SimpleToggleGenerator
             get { return EditorPrefs.GetBool("EnforceParameterType", false); }
             set { EditorPrefs.SetBool("EnforceParameterType", value); }
         }
-
+        private bool _experimentalMode
+        {
+            get { return EditorPrefs.GetBool("ExperimentalMode", false); }
+            set { EditorPrefs.SetBool("ExperimentalMode", value); }
+        }
         [MenuItem("Tools/Simple Toggle Generator")]
         public static void ShowWindow()
         {
@@ -262,6 +267,11 @@ namespace okitsu.net.SimpleToggleGenerator
                 _enforceParameterType = EditorGUILayout.Toggle(_enforceParameterType);
                 EditorGUILayout.EndHorizontal();
 
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.Label("Enable Experimental Option", GUILayout.Width(205));
+                _experimentalMode = EditorGUILayout.Toggle(_experimentalMode);
+                EditorGUILayout.EndHorizontal();
+
                 EditorGUI.indentLevel--;
             }
 
@@ -401,20 +411,37 @@ namespace okitsu.net.SimpleToggleGenerator
 
                     if (group.exclusiveMode)
                     {
-                        // Parameter Type (Bool / Float のみ)
-                        string[] typeOptions = { "Bool", "Float" };
-                        int selectedIndex = group.parameterType == AnimatorControllerParameterType.Float ? 1 : 0;
+                        // Parameter Type (Bool / Float / Int)
+                        List<string> typeOptions = new List<string> { "Bool", "Float" };
+                        if (_experimentalMode && group.objects.Count >= 8)
+                            typeOptions.Add("Int");
+
+                        int selectedIndex = 0;
+                        if (group.parameterType == AnimatorControllerParameterType.Float) selectedIndex = 1;
+                        else if (group.parameterType == AnimatorControllerParameterType.Int && typeOptions.Contains("Int")) selectedIndex = 2;
+
                         selectedIndex = EditorGUI.Popup(
                             new Rect(xL, yplus, wL, lh),
                             "Parameter Type",
                             selectedIndex,
-                            typeOptions
+                            typeOptions.ToArray()
                         );
-                        group.parameterType = (selectedIndex == 1)
-                            ? AnimatorControllerParameterType.Float
-                            : AnimatorControllerParameterType.Bool;
+
+                        if (selectedIndex == 0) group.parameterType = AnimatorControllerParameterType.Bool;
+                        else if (selectedIndex == 1) group.parameterType = AnimatorControllerParameterType.Float;
+                        else if (selectedIndex == 2) group.parameterType = AnimatorControllerParameterType.Int;
 
                         yplus += lh + vs;
+
+                        // Int 選択時は専用パラメータ名入力
+                        if (group.parameterType == AnimatorControllerParameterType.Int)
+                        {
+                            group.intParameterName = EditorGUI.TextField(
+                                new Rect(xL, yplus, wL, lh),
+                                "Parameter Name", group.intParameterName
+                            );
+                            yplus += lh + vs;
+                        }
                     }
 
                     // ReorderableList（オブジェクト一覧）
@@ -517,10 +544,14 @@ namespace okitsu.net.SimpleToggleGenerator
                     // 基本設定 4行 (Menu, Icon, Exclusive, AllowDisableAll)
                     height += UIStyles.GetLines(4);
 
-                    // ★ ExclusiveMode のとき Parameter Type 行を追加
+                    // ExclusiveMode のとき Parameter Type 行を追加
                     if (group.exclusiveMode)
                     {
-                        height += UIStyles.GetLines(1);
+                        height += UIStyles.GetLines(1); // ParameterType
+                        if (group.parameterType == AnimatorControllerParameterType.Int)
+                        {
+                            height += UIStyles.GetLines(1); // Int 用 Parameter Name
+                        }
                     }
 
                     // ReorderableList の高さ
@@ -615,9 +646,14 @@ namespace okitsu.net.SimpleToggleGenerator
                     group.customNames[index] = EditorGUI.TextField(new Rect(rect.x, y, rect.width, EditorGUIUtility.singleLineHeight), "InMenu Name", group.customNames[index]);
                     y += lineHeight;
 
-                    // Parameter Name
-                    group.parameterNames[index] = EditorGUI.TextField(new Rect(rect.x, y, rect.width, EditorGUIUtility.singleLineHeight), "Parameter Name", group.parameterNames[index]);
-                    y += lineHeight;
+                    // Parameter Name（Int 選択時は非表示）
+                    if (group.parameterType != AnimatorControllerParameterType.Int)
+                    {
+                        group.parameterNames[index] = EditorGUI.TextField(
+                            new Rect(rect.x, y, rect.width, EditorGUIUtility.singleLineHeight),
+                            "Parameter Name", group.parameterNames[index]);
+                        y += lineHeight;
+                    }
 
                     EditorGUI.indentLevel--;
                 }
@@ -631,7 +667,14 @@ namespace okitsu.net.SimpleToggleGenerator
 
                 if (index < group.isSettingsFoldout.Count && group.isSettingsFoldout[index])
                 {
-                    height += (lineHeight * 5); // Save, Sync, Prop Icon, Custom Name, Parameter Name
+                    // Save, Sync, Prop Icon, Custom Name は常に表示
+                    height += (lineHeight * 4);
+
+                    // Parameter Name は Int 以外のときだけ表示
+                    if (group.parameterType != AnimatorControllerParameterType.Int)
+                    {
+                        height += lineHeight;
+                    }
                 }
                 return height;
             };
@@ -814,7 +857,7 @@ namespace okitsu.net.SimpleToggleGenerator
                     }
                 }
 
-                if (invalidParams.Count > 0)
+                if (invalidParams.Count > 0 && toggleGroup.parameterType != AnimatorControllerParameterType.Int)
                 {
                     string paramList = string.Join("\n", invalidParams.Select(p => $"- {p.paramName}: selected {p.selected}, found {p.actual}"));
                     string message =
@@ -861,6 +904,7 @@ namespace okitsu.net.SimpleToggleGenerator
             }
             if (toggleGroup.exclusiveMode)
             {
+                string intParameterName = toggleGroup.intParameterName;
                 // 新しいレイヤーを作成
                 AnimatorControllerLayer newLayer = new()
                 {
@@ -900,47 +944,50 @@ namespace okitsu.net.SimpleToggleGenerator
                 }
 
                 // VRCAvatarParameterDriverをすべてのStateに追加
-                foreach (var state in newLayer.stateMachine.states.Select(s => s.state))
+                if (toggleGroup.parameterType != AnimatorControllerParameterType.Int)
                 {
-                    // VRCAvatarParameterDriverをすべてのStateに追加
-                    VRCAvatarParameterDriver driver = state.AddStateMachineBehaviour<VRCAvatarParameterDriver>();
-                    // Configure driver settings
-                    driver.parameters = new List<VRC.SDKBase.VRC_AvatarParameterDriver.Parameter>();
-                    driver.localOnly = true;
-
-                    // VRCAvatarParameterDriverのパラメータを設定
-                    foreach (var param in toggleGroup.parameterNames)
+                    foreach (var state in newLayer.stateMachine.states.Select(s => s.state))
                     {
-                        VRC.SDKBase.VRC_AvatarParameterDriver.Parameter driverParam = new()
-                        {
-                            name = param
-                        };
+                        // VRCAvatarParameterDriverをすべてのStateに追加
+                        VRCAvatarParameterDriver driver = state.AddStateMachineBehaviour<VRCAvatarParameterDriver>();
+                        // Configure driver settings
+                        driver.parameters = new List<VRC.SDKBase.VRC_AvatarParameterDriver.Parameter>();
+                        driver.localOnly = true;
 
-                        // StateがDefault Stateか確認
-                        if (state != newLayer.stateMachine.defaultState)
+                        // VRCAvatarParameterDriverのパラメータを設定
+                        foreach (var param in toggleGroup.parameterNames)
                         {
-                            // Default Stateでない場合、自己遷移条件を除くすべてのパラメータを設定
-                            if (param != state.name)
+                            VRC.SDKBase.VRC_AvatarParameterDriver.Parameter driverParam = new()
                             {
-                                driverParam.value = 0;
-                                driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
-                                driver.parameters.Add(driverParam);
-                            }
-                        }
-                        else
-                        {
-                            // Default Stateの場合、すべての遷移条件のパラメーターを設定
-                            if (param != state.name)
+                                name = param
+                            };
+
+                            // StateがDefault Stateか確認
+                            if (state != newLayer.stateMachine.defaultState)
                             {
-                                driverParam.value = 0;
-                                driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
+                                // Default Stateでない場合、自己遷移条件を除くすべてのパラメータを設定
+                                if (param != state.name)
+                                {
+                                    driverParam.value = 0;
+                                    driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
+                                    driver.parameters.Add(driverParam);
+                                }
                             }
                             else
                             {
-                                driverParam.value = 1;
-                                driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
+                                // Default Stateの場合、すべての遷移条件のパラメーターを設定
+                                if (param != state.name)
+                                {
+                                    driverParam.value = 0;
+                                    driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
+                                }
+                                else
+                                {
+                                    driverParam.value = 1;
+                                    driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
+                                }
+                                driver.parameters.Add(driverParam);
                             }
-                            driver.parameters.Add(driverParam);
                         }
                     }
                 }
@@ -960,10 +1007,20 @@ namespace okitsu.net.SimpleToggleGenerator
                             transition.interruptionSource = TransitionInterruptionSource.None;
 
                             // parameterNamesが既存のパラメーター名に無い場合パラメーターを追加
-                            string paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj2)];
-                            // パラメーターの追加/再作成処理
-                            // 共通関数で追加/更新
-                            CreateOrUpdateParameter(paramName, toggleGroup.parameterType);
+                            string paramName;
+
+                            if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
+                            {
+                                // Int モードでは intParameterName を使う
+                                paramName = toggleGroup.intParameterName;
+                                CreateOrUpdateParameter(paramName, AnimatorControllerParameterType.Int);
+                            }
+                            else
+                            {
+                                // それ以外は従来通り
+                                paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj2)];
+                                CreateOrUpdateParameter(paramName, toggleGroup.parameterType);
+                            }
                             // 遷移条件を設定
                             if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
                             {
@@ -973,6 +1030,11 @@ namespace okitsu.net.SimpleToggleGenerator
                             {
                                 // 例えば 0.5以上でオンとする
                                 transition.AddCondition(AnimatorConditionMode.Greater, 0.5f, paramName);
+                            }
+                            else if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
+                            {
+                                int value = toggleGroup.objects.IndexOf(obj2) + 1;
+                                transition.AddCondition(AnimatorConditionMode.Equals, value, intParameterName);
                             }
                         }
                     }
@@ -993,37 +1055,53 @@ namespace okitsu.net.SimpleToggleGenerator
                         toAllDisabled.exitTime = 0f;
                         toAllDisabled.interruptionSource = TransitionInterruptionSource.None;
 
-                        foreach (var param in toggleGroup.parameterNames)
+                        if (toggleGroup.parameterType != AnimatorControllerParameterType.Int)
                         {
-                            if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
+                            foreach (var param in toggleGroup.parameterNames)
                             {
-                                toAllDisabled.AddCondition(AnimatorConditionMode.IfNot, 0, param);
+                                if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
+                                {
+                                    toAllDisabled.AddCondition(AnimatorConditionMode.IfNot, 0, param);
+                                }
+                                else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                                {
+                                    toAllDisabled.AddCondition(AnimatorConditionMode.Less, 0.5f, param);
+                                }
                             }
-                            else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
-                            {
-                                toAllDisabled.AddCondition(AnimatorConditionMode.Less, 0.5f, param);
-                            }
+                        }
+                        else if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
+                        {
+                            toAllDisabled.AddCondition(AnimatorConditionMode.Equals, 0f, intParameterName);
                         }
                     }
                     // AllDisabledから各Stateへの遷移を追加
                     if (allDisabledState != null)
                     {
-                        foreach (var state in stateDictionary.Values)
+                        foreach (var kvp in stateDictionary)
                         {
+                            var obj = kvp.Key;
+                            var state = kvp.Value;
+
                             AnimatorStateTransition transition = allDisabledState.AddTransition(state);
                             transition.hasExitTime = false;
                             transition.exitTime = 0f;
                             transition.duration = 0f;
                             transition.interruptionSource = TransitionInterruptionSource.None;
 
-                            string paramName = toggleGroup.parameterNames.First(p => p == state.name);
                             if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
                             {
+                                string paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)];
                                 transition.AddCondition(AnimatorConditionMode.If, 1, paramName);
                             }
                             else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
                             {
+                                string paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)];
                                 transition.AddCondition(AnimatorConditionMode.Greater, 0.5f, paramName);
+                            }
+                            else if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
+                            {
+                                int value = toggleGroup.objects.IndexOf(obj) + 1; // ★ 1始まりで正しい値に
+                                transition.AddCondition(AnimatorConditionMode.Equals, value, toggleGroup.intParameterName);
                             }
                         }
                     }
@@ -1050,6 +1128,10 @@ namespace okitsu.net.SimpleToggleGenerator
                                 else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
                                 {
                                     defaultTransition.AddCondition(AnimatorConditionMode.Less, 0.5f, param);
+                                }
+                                else if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
+                                {
+                                    defaultTransition.AddCondition(AnimatorConditionMode.Equals, 0f, intParameterName);
                                 }
                             }
                         }
@@ -1417,18 +1499,16 @@ namespace okitsu.net.SimpleToggleGenerator
                         string customName = toggleGroup.customNames[index_o];
                         Texture2D propicon = toggleGroup.propIcon[index_o];
 
-                        // groupExpressionsMenuに同じ名前のコントロールが既に存在していないか確認
-                        bool controlExists = groupExpressionsMenu.controls.Any(control => control.name == customName);
-                        if (!controlExists)
+                        if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
                         {
                             VRCExpressionsMenu.Control control = new()
                             {
                                 name = customName,
                                 type = VRCExpressionsMenu.Control.ControlType.Toggle,
-                                value = 1f,
+                                value = index_o + 1,
                                 parameter = new VRCExpressionsMenu.Control.Parameter()
                                 {
-                                    name = paramName
+                                    name = toggleGroup.intParameterName
                                 },
                                 icon = toggleGroup.propIcon != null ? propicon : null
                             };
@@ -1436,7 +1516,27 @@ namespace okitsu.net.SimpleToggleGenerator
                         }
                         else
                         {
-                            Debug.LogWarning($"Control '{customName}' already exists in {groupExpressionsMenu.name}. Skipping duplicate.");
+                            // groupExpressionsMenuに同じ名前のコントロールが既に存在していないか確認
+                            bool controlExists = groupExpressionsMenu.controls.Any(control => control.name == customName);
+                            if (!controlExists)
+                            {
+                                VRCExpressionsMenu.Control control = new()
+                                {
+                                    name = customName,
+                                    type = VRCExpressionsMenu.Control.ControlType.Toggle,
+                                    value = 1f,
+                                    parameter = new VRCExpressionsMenu.Control.Parameter()
+                                    {
+                                        name = paramName
+                                    },
+                                    icon = toggleGroup.propIcon != null ? propicon : null
+                                };
+                                groupExpressionsMenu.controls.Add(control);
+                            }
+                            else
+                            {
+                                Debug.LogWarning($"Control '{customName}' already exists in {groupExpressionsMenu.name}. Skipping duplicate.");
+                            }
                         }
                     }
                     EditorUtility.SetDirty(groupExpressionsMenu);
@@ -1675,25 +1775,26 @@ namespace okitsu.net.SimpleToggleGenerator
 
             foreach (var toggleGroup in _toggleGroups)
             {
-                for (int i = 0; i < toggleGroup.objects.Count; i++)
+                // Int モードの場合は専用処理
+                if (toggleGroup.exclusiveMode && toggleGroup.parameterType == AnimatorControllerParameterType.Int)
                 {
-                    // 変数から設定値を取得
-                    string parameterName = toggleGroup.parameterNames[i];
-                    bool defaultValue = toggleGroup.objects.Any(obj => obj.activeSelf && toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)] == parameterName);
-                    bool saved = i < toggleGroup.save.Count ? toggleGroup.save[i] : true;
-                    bool synced = i < toggleGroup.sync.Count ? toggleGroup.sync[i] : true;
-                    var paramType = VRCExpressionParameters.ValueType.Bool;
+                    string parameterName = toggleGroup.intParameterName;
 
-                    // 🔽 enforceParameterType が true のときのみ ToggleGroup の設定を尊重
-                    if (_enforceParameterType)
+                    // 有効なオブジェクトに合わせて初期値を決定
+                    int defaultValue = 0;
+                    for (int i = 0; i < toggleGroup.objects.Count; i++)
                     {
-                        if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
-                            paramType = VRCExpressionParameters.ValueType.Float;
-                        else
-                            paramType = VRCExpressionParameters.ValueType.Bool;
+                        if (toggleGroup.objects[i] != null && toggleGroup.objects[i].activeSelf)
+                        {
+                            defaultValue = i + 1; // 1始まり
+                            break;
+                        }
                     }
 
-                    // parameterNamesが既存のexpression parametersに無い場合パラメーターを追加
+                    bool saved = true;
+                    bool synced = true;
+                    var paramType = VRCExpressionParameters.ValueType.Int;
+
                     if (!existingParameters.Contains(parameterName))
                     {
                         var length = _vrcExpressionParameters.parameters.Length;
@@ -1705,20 +1806,67 @@ namespace okitsu.net.SimpleToggleGenerator
                             valueType = paramType,
                             saved = saved,
                             networkSynced = synced,
-                            defaultValue = defaultValue ? 1 : 0
+                            defaultValue = defaultValue
                         };
                     }
                     else
                     {
                         // 既存のパラメータを更新
                         var parameterIndex = Array.FindIndex(_vrcExpressionParameters.parameters, p => p.name == parameterName);
-                        _vrcExpressionParameters.parameters[parameterIndex].defaultValue = defaultValue ? 1 : 0;
+                        _vrcExpressionParameters.parameters[parameterIndex].defaultValue = defaultValue;
                         _vrcExpressionParameters.parameters[parameterIndex].saved = saved;
                         _vrcExpressionParameters.parameters[parameterIndex].networkSynced = synced;
                         _vrcExpressionParameters.parameters[parameterIndex].valueType = paramType;
                     }
                 }
+                else
+                {
+                    for (int i = 0; i < toggleGroup.objects.Count; i++)
+                    {
+                        // 変数から設定値を取得
+                        string parameterName = toggleGroup.parameterNames[i];
+                        bool defaultValue = toggleGroup.objects.Any(obj => obj.activeSelf && toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)] == parameterName);
+                        bool saved = i < toggleGroup.save.Count ? toggleGroup.save[i] : true;
+                        bool synced = i < toggleGroup.sync.Count ? toggleGroup.sync[i] : true;
+                        var paramType = VRCExpressionParameters.ValueType.Bool;
+
+                        // 🔽 enforceParameterType が true のときのみ ToggleGroup の設定を尊重
+                        if (_enforceParameterType)
+                        {
+                            if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                                paramType = VRCExpressionParameters.ValueType.Float;
+                            else
+                                paramType = VRCExpressionParameters.ValueType.Bool;
+                        }
+
+                        // parameterNamesが既存のexpression parametersに無い場合パラメーターを追加
+                        if (!existingParameters.Contains(parameterName))
+                        {
+                            var length = _vrcExpressionParameters.parameters.Length;
+                            Array.Resize(ref _vrcExpressionParameters.parameters, length + 1);
+
+                            _vrcExpressionParameters.parameters[length] = new VRCExpressionParameters.Parameter()
+                            {
+                                name = parameterName,
+                                valueType = paramType,
+                                saved = saved,
+                                networkSynced = synced,
+                                defaultValue = defaultValue ? 1 : 0
+                            };
+                        }
+                        else
+                        {
+                            // 既存のパラメータを更新
+                            var parameterIndex = Array.FindIndex(_vrcExpressionParameters.parameters, p => p.name == parameterName);
+                            _vrcExpressionParameters.parameters[parameterIndex].defaultValue = defaultValue ? 1 : 0;
+                            _vrcExpressionParameters.parameters[parameterIndex].saved = saved;
+                            _vrcExpressionParameters.parameters[parameterIndex].networkSynced = synced;
+                            _vrcExpressionParameters.parameters[parameterIndex].valueType = paramType;
+                        }
+                    }
+                }
             }
+
             // Avatar descriptorを更新
             EditorUtility.SetDirty(_avatar.expressionParameters);
         }
