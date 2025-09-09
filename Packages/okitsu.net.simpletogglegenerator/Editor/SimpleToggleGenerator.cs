@@ -1187,15 +1187,12 @@ namespace okitsu.net.SimpleToggleGenerator
                     // オブジェクト個別のパラメータ (Float, 0=Off, 1=On)
                     CreateOrUpdateParameter(paramName, AnimatorControllerParameterType.Float);
 
-                    // 子BlendTree (1D)
-                    BlendTree childTree = new BlendTree
-                    {
-                        name = $"{obj.name}_BlendTree",
-                        blendType = BlendTreeType.Simple1D,
-                        useAutomaticThresholds = false,
-                        blendParameter = paramName
-                    };
-                    AssetDatabase.AddObjectToAsset(childTree, _animatorController);
+                    // ★ 子BlendTreeをCreateBlendTreeChildで生成
+                    BlendTree childTree = parentBlendTree.CreateBlendTreeChild(0f); 
+                    childTree.name = $"{obj.name}_BlendTree";
+                    childTree.blendType = BlendTreeType.Simple1D;
+                    childTree.useAutomaticThresholds = false;
+                    childTree.blendParameter = paramName;
 
                     // OffClip (threshold 0) / OnClip (threshold 1)
                     AnimationClip offClip = CreateSingleDisableClip(obj, toggleGroup);
