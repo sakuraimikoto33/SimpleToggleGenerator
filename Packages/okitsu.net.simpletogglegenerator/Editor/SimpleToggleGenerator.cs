@@ -22,6 +22,7 @@ namespace okitsu.net.SimpleToggleGenerator
             public Texture2D groupIcon;
             public bool exclusiveMode = true;
             public bool allowDisableAll = false;
+            public AnimatorControllerParameterType parameterType = AnimatorControllerParameterType.Bool;
             public List<GameObject> objects = new();
             public bool isFoldout = true;
             public List<bool> isSettingsFoldout = new();
@@ -75,6 +76,11 @@ namespace okitsu.net.SimpleToggleGenerator
         {
             get { return EditorPrefs.GetBool("DisableCfmDialog", false); }
             set { EditorPrefs.SetBool("DisableCfmDialog", value); }
+        }
+        private bool _enforceParameterType
+        {
+            get { return EditorPrefs.GetBool("EnforceParameterType", false); }
+            set { EditorPrefs.SetBool("EnforceParameterType", value); }
         }
 
         [MenuItem("Tools/Simple Toggle Generator")]
@@ -241,14 +247,19 @@ namespace okitsu.net.SimpleToggleGenerator
 
             // GUILayout.Space(10);
 
-            _foldoutMenu = EditorGUILayout.Foldout(_foldoutMenu, "Additional Options");
+            _foldoutMenu = EditorGUILayout.Foldout(_foldoutMenu, "Advanced Options");
             if (_foldoutMenu)
             {
                 EditorGUI.indentLevel++;
 
                 EditorGUILayout.BeginHorizontal();
-                GUILayout.Label("Disable Confirm dialog", GUILayout.Width(EditorGUIUtility.labelWidth - 4));
+                GUILayout.Label("Disable Confirm dialog", GUILayout.Width(205));
                 _disablecfmdialog = EditorGUILayout.Toggle(_disablecfmdialog);
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.Label("Enforce Expression Parameter Type", GUILayout.Width(205));
+                _enforceParameterType = EditorGUILayout.Toggle(_enforceParameterType);
                 EditorGUILayout.EndHorizontal();
 
                 EditorGUI.indentLevel--;
@@ -388,6 +399,24 @@ namespace okitsu.net.SimpleToggleGenerator
                     EditorGUI.EndDisabledGroup();
                     yplus += lh + vs;
 
+                    if (group.exclusiveMode)
+                    {
+                        // Parameter Type (Bool / Float のみ)
+                        string[] typeOptions = { "Bool", "Float" };
+                        int selectedIndex = group.parameterType == AnimatorControllerParameterType.Float ? 1 : 0;
+                        selectedIndex = EditorGUI.Popup(
+                            new Rect(xL, yplus, wL, lh),
+                            "Parameter Type",
+                            selectedIndex,
+                            typeOptions
+                        );
+                        group.parameterType = (selectedIndex == 1)
+                            ? AnimatorControllerParameterType.Float
+                            : AnimatorControllerParameterType.Bool;
+
+                        yplus += lh + vs;
+                    }
+
                     // ReorderableList（オブジェクト一覧）
                     if (group.reorderableList == null)
                         SetupReorderableList(group);
@@ -487,6 +516,12 @@ namespace okitsu.net.SimpleToggleGenerator
                 {
                     // 基本設定 4行 (Menu, Icon, Exclusive, AllowDisableAll)
                     height += UIStyles.GetLines(4);
+
+                    // ★ ExclusiveMode のとき Parameter Type 行を追加
+                    if (group.exclusiveMode)
+                    {
+                        height += UIStyles.GetLines(1);
+                    }
 
                     // ReorderableList の高さ
                     if (group.reorderableList != null)
@@ -647,7 +682,7 @@ namespace okitsu.net.SimpleToggleGenerator
         private void GenerateToggle()
         {
             // 続行する前にグループを検証
-            if (!ValidateToggleGroups())
+            if (!VerifyToggleGroups())
             {
                 Debug.LogError("Verification failed");
                 return;
@@ -717,7 +752,7 @@ namespace okitsu.net.SimpleToggleGenerator
         }
 
         // ====検証====
-        private bool ValidateToggleGroups()
+        private bool VerifyToggleGroups()
         {
             if (_toggleGroups.Count == 0)
             {
@@ -743,148 +778,65 @@ namespace okitsu.net.SimpleToggleGenerator
                     return false;
                 }
 
-                // === 非排他モード用チェック ===
-                if (!toggleGroup.exclusiveMode)
+                if (_enforceParameterType && toggleGroup.parameterType == AnimatorControllerParameterType.Float)
                 {
-                    List<(string paramName, AnimatorControllerParameterType type)> invalidParams = new();
-
-                    foreach (var paramName in toggleGroup.parameterNames)
+                    Debug.LogWarning("Note: Enforcing Float parameter type may increase memory usage.");
+                    if (EditorUtility.DisplayDialog(
+                        "Memory Usage Warning",
+                        "Enforcing Float parameter types may increase memory usage.\n\n" +
+                        "See documentation for details:\nhttps://vrc.school/docs/Other/Parameter-Mismatching/",
+                        "OK", "Cancel"))
                     {
-                        if (string.IsNullOrEmpty(paramName)) continue;
-
-                        var existingParam = _animatorController.parameters.FirstOrDefault(p => p.name == paramName);
-                        if (existingParam != null && existingParam.type != AnimatorControllerParameterType.Float)
-                        {
-                            invalidParams.Add((paramName, existingParam.type));
-                        }
+                        // 続行＝OK 無操作
                     }
-
-                    if (invalidParams.Count > 0)
+                    else
                     {
-                        string paramList = string.Join("\n", invalidParams.Select(p => $"- {p.paramName} (type: {p.type})"));
-                        string message =
-                            $"The following parameters already exist with a non-Float type:\n\n{paramList}\n\n" +
-                            $"Non-exclusive mode requires Float parameters.\n\n" +
-                            $"How would you like to proceed?";
+                        // Cancel 選択時は中断または処理キャンセル
+                        return false;
+                    }
+                }
 
-                        int option = EditorUtility.DisplayDialogComplex(
-                            "Parameter Type Warning",
-                            message,
-                            "Continue Anyway",             // 0
-                            "Cancel",                      // 1
-                            "Replace with Float Parameters"// 2
-                        );
+                // === パラメーター型不一致チェック（排他/非排他共通） ===
+                List<(string paramName, AnimatorControllerParameterType selected, AnimatorControllerParameterType actual)> invalidParams = new();
+                foreach (var paramName in toggleGroup.parameterNames)
+                {
+                    if (string.IsNullOrEmpty(paramName)) continue;
 
-                        if (option == 1) // Cancel
-                        {
-                            Debug.Log("Process canceled by user due to invalid parameter types.");
-                            return false;
-                        }
-                        else if (option == 2) // Replace with Float Parameters
-                        {
-                            // === 他レイヤー使用チェック ===
-                            List<string> usedParams = new();
+                    // 🔽 非排他モードでは強制的に Float を期待
+                    var expectedType = toggleGroup.exclusiveMode
+                        ? toggleGroup.parameterType
+                        : AnimatorControllerParameterType.Float;
 
-                            foreach (var (paramName, _) in invalidParams)
-                            {
-                                foreach (var layer in _animatorController.layers)
-                                {
-                                    if (layer.name == toggleGroup.layerName) continue;
+                    var existingParam = _animatorController.parameters.FirstOrDefault(p => p.name == paramName);
+                    if (existingParam != null && existingParam.type != expectedType)
+                    {
+                        invalidParams.Add((paramName, expectedType, existingParam.type));
+                    }
+                }
 
-                                    if (IsParameterUsedInStateMachine(layer.stateMachine, paramName))
-                                    {
-                                        if (!usedParams.Contains(paramName))
-                                            usedParams.Add(paramName);
-                                    }
-                                }
-                            }
+                if (invalidParams.Count > 0)
+                {
+                    string paramList = string.Join("\n", invalidParams.Select(p => $"- {p.paramName}: selected {p.selected}, found {p.actual}"));
+                    string message =
+                        $"The following parameters do not match the selected type:\n\n" +
+                        $"Parameter List:\n{paramList}\n\n" +
+                        $"Do you want to update the parameters and transition conditions and continue?";
 
-                            if (usedParams.Count > 0)
-                            {
-                                string usedList = string.Join("\n", usedParams.Select(p => $"- {p}"));
-                                string warnMsg =
-                                    $"The following parameters are used as transition conditions in other layers:\n\n{usedList}\n\n" +
-                                    $"Replacing them with Float parameters may break existing transitions.\n\n" +
-                                    $"Do you want to continue?";
+                    bool cont = EditorUtility.DisplayDialog(
+                        "Parameter Type Warning",
+                        message,
+                        "Continue",
+                        "Cancel"
+                    );
 
-                                bool cont = EditorUtility.DisplayDialog(
-                                    "Parameter Usage Warning",
-                                    warnMsg,
-                                    "Continue Anyway",
-                                    "Cancel"
-                                );
-
-                                if (!cont)
-                                {
-                                    Debug.Log("Process canceled due to parameter usage in other layers.");
-                                    return false;
-                                }
-                            }
-
-                            // === 問題なければ削除 ===
-                            foreach (var (paramName, paramType) in invalidParams)
-                            {
-                                var toRemove = _animatorController.parameters.FirstOrDefault(p => p.name == paramName);
-                                if (toRemove != null)
-                                {
-                                    _animatorController.RemoveParameter(toRemove);
-                                    Debug.Log($"Removed parameter '{paramName}' of type {paramType}. A Float parameter will be created later.");
-                                }
-                            }
-                        }
-                        // option == 0 → Continue Anyway（そのまま進める）
+                    if (!cont)
+                    {
+                        Debug.Log("Process canceled by user due to parameter type mismatch.");
+                        return false;
                     }
                 }
             }
             return true;
-        }
-
-        /// <summary>
-        /// サブステートマシンも含めてパラメータ使用チェック
-        /// </summary>
-        private bool IsParameterUsedInStateMachine(AnimatorStateMachine stateMachine, string paramName)
-        {
-            // ステートの遷移を確認
-            foreach (var state in stateMachine.states)
-            {
-                foreach (var transition in state.state.transitions)
-                {
-                    foreach (var condition in transition.conditions)
-                    {
-                        if (condition.parameter == paramName)
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // サブステートマシンの遷移を確認
-            foreach (var subStateMachine in stateMachine.stateMachines)
-            {
-                if (IsParameterUsedInStateMachine(subStateMachine.stateMachine, paramName))
-                    return true;
-            }
-
-            // エントリー/AnyStateなどの遷移
-            foreach (var transition in stateMachine.anyStateTransitions)
-            {
-                foreach (var condition in transition.conditions)
-                {
-                    if (condition.parameter == paramName)
-                        return true;
-                }
-            }
-            foreach (var transition in stateMachine.entryTransitions)
-            {
-                foreach (var condition in transition.conditions)
-                {
-                    if (condition.parameter == paramName)
-                        return true;
-                }
-            }
-
-            return false;
         }
 
         // ====コア====
@@ -1009,59 +961,101 @@ namespace okitsu.net.SimpleToggleGenerator
 
                             // parameterNamesが既存のパラメーター名に無い場合パラメーターを追加
                             string paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj2)];
-                            if (!existingParameterNames.Contains(paramName))
-                            {
-                                var parameter = new AnimatorControllerParameter
-                                {
-                                    name = paramName,
-                                    type = AnimatorControllerParameterType.Bool
-                                };
-                                _animatorController.AddParameter(parameter);
-                                existingParameterNames.Add(paramName);
-                            }
-
+                            // パラメーターの追加/再作成処理
+                            // 共通関数で追加/更新
+                            CreateOrUpdateParameter(paramName, toggleGroup.parameterType);
                             // 遷移条件を設定
-                            transition.AddCondition(AnimatorConditionMode.If, 0, paramName);
+                            if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
+                            {
+                                transition.AddCondition(AnimatorConditionMode.If, 0, paramName);
+                            }
+                            else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                            {
+                                // 例えば 0.5以上でオンとする
+                                transition.AddCondition(AnimatorConditionMode.Greater, 0.5f, paramName);
+                            }
                         }
                     }
                 }
 
-                // Default State以外のすべてのStateからDefault Stateへの遷移を設定
-                foreach (var nonDefaultState in newLayer.stateMachine.states)
+                // === 戻り遷移の設定 ===
+                if (toggleGroup.allowDisableAll && allDisabledState != null)
                 {
-                    // Stateが存在し、Default Stateでないかチェック
-                    if (nonDefaultState.state != null && nonDefaultState.state != newLayer.stateMachine.defaultState)
+                    // ★ AllowDisableAll が有効なら全ステートから AllDisabledState へ
+                    foreach (var state in newLayer.stateMachine.states)
                     {
-                        // Default Stateへの遷移を追加
-                        AnimatorStateTransition defaultTransition = nonDefaultState.state.AddTransition(newLayer.stateMachine.defaultState);
-                        defaultTransition.hasExitTime = false;
-                        defaultTransition.duration = 0f;
-                        defaultTransition.exitTime = 0f;
-                        defaultTransition.interruptionSource = TransitionInterruptionSource.None;
+                        if (state.state == null || state.state == allDisabledState)
+                            continue; // 自分自身からは不要
 
-                        // すべてのパラメーターがfalseになった時に、Default Stateへ戻るように遷移条件を設定
+                        AnimatorStateTransition toAllDisabled = state.state.AddTransition(allDisabledState);
+                        toAllDisabled.hasExitTime = false;
+                        toAllDisabled.duration = 0f;
+                        toAllDisabled.exitTime = 0f;
+                        toAllDisabled.interruptionSource = TransitionInterruptionSource.None;
+
                         foreach (var param in toggleGroup.parameterNames)
                         {
-                            defaultTransition.AddCondition(AnimatorConditionMode.IfNot, 0, param);
+                            if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
+                            {
+                                toAllDisabled.AddCondition(AnimatorConditionMode.IfNot, 0, param);
+                            }
+                            else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                            {
+                                toAllDisabled.AddCondition(AnimatorConditionMode.Less, 0.5f, param);
+                            }
+                        }
+                    }
+                    // AllDisabledから各Stateへの遷移を追加
+                    if (allDisabledState != null)
+                    {
+                        foreach (var state in stateDictionary.Values)
+                        {
+                            AnimatorStateTransition transition = allDisabledState.AddTransition(state);
+                            transition.hasExitTime = false;
+                            transition.exitTime = 0f;
+                            transition.duration = 0f;
+                            transition.interruptionSource = TransitionInterruptionSource.None;
+
+                            string paramName = toggleGroup.parameterNames.First(p => p == state.name);
+                            if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
+                            {
+                                transition.AddCondition(AnimatorConditionMode.If, 1, paramName);
+                            }
+                            else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                            {
+                                transition.AddCondition(AnimatorConditionMode.Greater, 0.5f, paramName);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // ★ AllowDisableAll が無効な場合は従来通り DefaultState に戻す
+                    foreach (var nonDefaultState in newLayer.stateMachine.states)
+                    {
+                        if (nonDefaultState.state != null && nonDefaultState.state != newLayer.stateMachine.defaultState)
+                        {
+                            AnimatorStateTransition defaultTransition = nonDefaultState.state.AddTransition(newLayer.stateMachine.defaultState);
+                            defaultTransition.hasExitTime = false;
+                            defaultTransition.duration = 0f;
+                            defaultTransition.exitTime = 0f;
+                            defaultTransition.interruptionSource = TransitionInterruptionSource.None;
+
+                            foreach (var param in toggleGroup.parameterNames)
+                            {
+                                if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
+                                {
+                                    defaultTransition.AddCondition(AnimatorConditionMode.IfNot, 0, param);
+                                }
+                                else if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                                {
+                                    defaultTransition.AddCondition(AnimatorConditionMode.Less, 0.5f, param);
+                                }
+                            }
                         }
                     }
                 }
 
-                // AllDisabledから各Stateへの遷移を追加
-                if (allDisabledState != null)
-                {
-                    foreach (var state in stateDictionary.Values)
-                    {
-                        AnimatorStateTransition transition = allDisabledState.AddTransition(state);
-                        transition.hasExitTime = false;
-                        transition.exitTime = 0f;
-                        transition.duration = 0f;
-                        transition.interruptionSource = TransitionInterruptionSource.None;
-
-                        string paramName = toggleGroup.parameterNames.First(p => p == state.name);
-                        transition.AddCondition(AnimatorConditionMode.If, 1, paramName);
-                    }
-                }
                 _animatorController.AddLayer(newLayer);
             }
             else
@@ -1109,10 +1103,7 @@ namespace okitsu.net.SimpleToggleGenerator
                     string paramName = toggleGroup.parameterNames[i];
 
                     // オブジェクト個別のパラメータ (Float, 0=Off, 1=On)
-                    if (!_animatorController.parameters.Any(p => p.name == paramName))
-                    {
-                        _animatorController.AddParameter(paramName, AnimatorControllerParameterType.Float);
-                    }
+                    CreateOrUpdateParameter(paramName, AnimatorControllerParameterType.Float);
 
                     // 子BlendTree (1D)
                     BlendTree childTree = new BlendTree
@@ -1154,7 +1145,118 @@ namespace okitsu.net.SimpleToggleGenerator
             }
         }
 
-        // ====排他モードでのAnimation作成====
+        // ====パラメーター作成====
+        private void CreateOrUpdateParameter(string paramName, AnimatorControllerParameterType type)
+        {
+            var existingParam = _animatorController.parameters.FirstOrDefault(p => p.name == paramName);
+            if (existingParam == null)
+            {
+                var parameter = new AnimatorControllerParameter { name = paramName, type = type };
+                _animatorController.AddParameter(parameter);
+            }
+            else if (existingParam.type != type)
+            {
+                // 既存の遷移条件を更新
+                foreach (var layer in _animatorController.layers)
+                {
+                    UpdateTransitionConditions(layer.stateMachine, paramName, type);
+                }
+                _animatorController.RemoveParameter(existingParam);
+                var parameter = new AnimatorControllerParameter { name = paramName, type = type };
+                _animatorController.AddParameter(parameter);
+            }
+        }
+
+        // ====遷移条件更新====
+        private void UpdateTransitionConditions(AnimatorStateMachine stateMachine, string paramName, AnimatorControllerParameterType newType)
+        {
+            // 各Stateの遷移をチェック
+            foreach (var state in stateMachine.states)
+            {
+                var transitions = state.state.transitions;
+                for (int i = 0; i < transitions.Length; i++)
+                {
+                    var conds = transitions[i].conditions;
+                    for (int j = 0; j < conds.Length; j++)
+                    {
+                        if (conds[j].parameter == paramName)
+                        {
+                            conds[j] = ConvertCondition(conds[j], newType);
+                        }
+                    }
+                    transitions[i].conditions = conds;
+                }
+            }
+
+            // AnyState遷移
+            foreach (var transition in stateMachine.anyStateTransitions)
+            {
+                var conds = transition.conditions;
+                for (int j = 0; j < conds.Length; j++)
+                {
+                    if (conds[j].parameter == paramName)
+                    {
+                        conds[j] = ConvertCondition(conds[j], newType);
+                    }
+                }
+                transition.conditions = conds;
+            }
+
+            // Entry遷移
+            foreach (var transition in stateMachine.entryTransitions)
+            {
+                var conds = transition.conditions;
+                for (int j = 0; j < conds.Length; j++)
+                {
+                    if (conds[j].parameter == paramName)
+                    {
+                        conds[j] = ConvertCondition(conds[j], newType);
+                    }
+                }
+                transition.conditions = conds;
+            }
+
+            // サブステートマシンも再帰的に処理
+            foreach (var sub in stateMachine.stateMachines)
+            {
+                UpdateTransitionConditions(sub.stateMachine, paramName, newType);
+            }
+        }
+
+        private AnimatorCondition ConvertCondition(AnimatorCondition condition, AnimatorControllerParameterType newType)
+        {
+            if (newType == AnimatorControllerParameterType.Float)
+            {
+                // Bool → Float
+                if (condition.mode == AnimatorConditionMode.If)
+                {
+                    condition.mode = AnimatorConditionMode.Greater;
+                    condition.threshold = 0.5f;
+                }
+                else if (condition.mode == AnimatorConditionMode.IfNot)
+                {
+                    condition.mode = AnimatorConditionMode.Less;
+                    condition.threshold = 0.5f;
+                }
+            }
+            else if (newType == AnimatorControllerParameterType.Bool)
+            {
+                // Float → Bool
+                if (condition.mode == AnimatorConditionMode.Greater && condition.threshold >= 0.5f)
+                {
+                    condition.mode = AnimatorConditionMode.If;
+                    condition.threshold = 0f;
+                }
+                else if (condition.mode == AnimatorConditionMode.Less && condition.threshold <= 0.5f)
+                {
+                    condition.mode = AnimatorConditionMode.IfNot;
+                    condition.threshold = 0f;
+                }
+            }
+            return condition;
+        }
+
+        // ====排他モードでのAnimation Clip作成====
         private AnimationClip CreateAnimationClip(GameObject obj, List<GameObject> groupObjects, ToggleGroup toggleGroup)
         {
             AnimationClip clip = new();
@@ -1191,7 +1293,7 @@ namespace okitsu.net.SimpleToggleGenerator
             return SaveClip(clip, toggleGroup.layerName);
         }
 
-        // ====非排他モードでのAnimation作成====
+        // ====非排他モードでのAnimation Clip作成====
         private AnimationClip CreateSingleEnableClip(GameObject obj, ToggleGroup toggleGroup)
         {
             AnimationClip clip = new();
@@ -1216,7 +1318,22 @@ namespace okitsu.net.SimpleToggleGenerator
             return SaveClip(clip, toggleGroup.layerName);
         }
 
-        // ====クリップを保存====
+        private string GetGameObjectPath(GameObject obj)
+        {
+            string path = "";
+            Transform transform = obj.transform;
+            while (transform != null)
+            {
+                if (transform.parent != null)
+                {
+                    path = transform.name + (path == "" ? "" : "/") + path;
+                }
+                transform = transform.parent;
+            }
+            return path;
+        }
+
+        // ====Animation Clipを保存====
         private AnimationClip SaveClip(AnimationClip clip, string folderName)
         {
             string rootPath = _avatar != null ? _avatar.name : _animatorController.name;
@@ -1234,21 +1351,7 @@ namespace okitsu.net.SimpleToggleGenerator
             return clip;
         }
 
-        private string GetGameObjectPath(GameObject obj)
-        {
-            string path = "";
-            Transform transform = obj.transform;
-            while (transform != null)
-            {
-                if (transform.parent != null)
-                {
-                    path = transform.name + (path == "" ? "" : "/") + path;
-                }
-                transform = transform.parent;
-            }
-            return path;
-        }
-
+        // ====Expression関連====
         private void CreateExpressionMenus()
         {
             string rootMenuPath = $"{_savePath}/{_avatar.name}";
@@ -1579,16 +1682,27 @@ namespace okitsu.net.SimpleToggleGenerator
                     bool defaultValue = toggleGroup.objects.Any(obj => obj.activeSelf && toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)] == parameterName);
                     bool saved = i < toggleGroup.save.Count ? toggleGroup.save[i] : true;
                     bool synced = i < toggleGroup.sync.Count ? toggleGroup.sync[i] : true;
+                    var paramType = VRCExpressionParameters.ValueType.Bool;
+
+                    // 🔽 enforceParameterType が true のときのみ ToggleGroup の設定を尊重
+                    if (_enforceParameterType)
+                    {
+                        if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                            paramType = VRCExpressionParameters.ValueType.Float;
+                        else
+                            paramType = VRCExpressionParameters.ValueType.Bool;
+                    }
 
                     // parameterNamesが既存のexpression parametersに無い場合パラメーターを追加
                     if (!existingParameters.Contains(parameterName))
                     {
                         var length = _vrcExpressionParameters.parameters.Length;
                         Array.Resize(ref _vrcExpressionParameters.parameters, length + 1);
-                        _vrcExpressionParameters.parameters[length] = new VRCExpressionParameters.Parameter() 
-                        {   
+
+                        _vrcExpressionParameters.parameters[length] = new VRCExpressionParameters.Parameter()
+                        {
                             name = parameterName,
-                            valueType = VRCExpressionParameters.ValueType.Bool,
+                            valueType = paramType,
                             saved = saved,
                             networkSynced = synced,
                             defaultValue = defaultValue ? 1 : 0
@@ -1601,6 +1715,7 @@ namespace okitsu.net.SimpleToggleGenerator
                         _vrcExpressionParameters.parameters[parameterIndex].defaultValue = defaultValue ? 1 : 0;
                         _vrcExpressionParameters.parameters[parameterIndex].saved = saved;
                         _vrcExpressionParameters.parameters[parameterIndex].networkSynced = synced;
+                        _vrcExpressionParameters.parameters[parameterIndex].valueType = paramType;
                     }
                 }
             }
@@ -1682,6 +1797,7 @@ namespace okitsu.net.SimpleToggleGenerator
             public string groupIconPath;
             public bool exclusiveMode;
             public bool allowDisableAll;
+            public AnimatorControllerParameterType parameterType;
             public List<string> objectPaths;
             public bool isFoldout;
             public List<bool> isSettingsFoldout;
@@ -1705,6 +1821,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 groupIconPath = group.groupIcon != null ? AssetDatabase.GetAssetPath(group.groupIcon) : string.Empty;
                 exclusiveMode = group.exclusiveMode;
                 allowDisableAll = group.allowDisableAll;
+                parameterType = group.parameterType;
                 objectPaths = new List<string>();
                 if (group.objects != null)
                 {
@@ -1737,6 +1854,7 @@ namespace okitsu.net.SimpleToggleGenerator
                     groupIcon = !string.IsNullOrEmpty(groupIconPath) ? AssetDatabase.LoadAssetAtPath<Texture2D>(groupIconPath) : null,
                     exclusiveMode = exclusiveMode,
                     allowDisableAll = allowDisableAll,
+                    parameterType = parameterType,
                     objects = new List<GameObject>(),
                     save = new List<bool>(save),
                     sync = new List<bool>(sync),
