@@ -72,7 +72,7 @@ namespace okitsu.net.SimpleToggleGenerator
         private VRCExpressionsMenu _rootMenu;
         private string _rootMenuName = "";
         private VRCExpressionParameters _vrcExpressionParameters;
-        private string _baseNameDBT = "SimpleToggleGenerator";
+        private string _blendTreeBaseName = "SimpleToggleGenerator";
         private bool _foldoutMenu = false;
         private bool _disablecfmdialog
         {
@@ -99,8 +99,8 @@ namespace okitsu.net.SimpleToggleGenerator
         private VRCAvatarDescriptor _previousAvatar;
         private BlendTree _rootNonExclusiveBlendTree;
         private AnimatorControllerLayer _nonExclusiveLayer;
-        
-        // ====GUI要素====
+
+        // ====GUI====
         private void OnGUI()
         {
             GUILayout.Label("Save Path", EditorStyles.boldLabel);
@@ -127,7 +127,7 @@ namespace okitsu.net.SimpleToggleGenerator
 
                 if (_avatar != null)
                 {
-                    // FXLayerが設定されているかを確認
+                    // FXLayer
                     if (_avatar.baseAnimationLayers[4].animatorController != null)
                     {
                         _animatorController = (AnimatorController)_avatar.baseAnimationLayers[4].animatorController;
@@ -138,7 +138,7 @@ namespace okitsu.net.SimpleToggleGenerator
                         _animatorController = null;
                     }
 
-                    // VRCExpressionsMenuが設定されているかを確認
+                    // VRCExpressionsMenu
                     if (_avatar.expressionsMenu != null)
                     {
                         _vrcExpressionsMenu = _avatar.expressionsMenu;
@@ -149,7 +149,7 @@ namespace okitsu.net.SimpleToggleGenerator
                         _vrcExpressionsMenu = null;
                     }
 
-                    // VRCExpressionParametersが設定されているかを確認
+                    // VRCExpressionParameters
                     if (_avatar.expressionParameters != null)
                     {
                         _vrcExpressionParameters = _avatar.expressionParameters;
@@ -220,6 +220,7 @@ namespace okitsu.net.SimpleToggleGenerator
             }
             EditorGUI.EndDisabledGroup();
             GUILayout.EndHorizontal();
+
             // RootMenu フィールドを追加
             _rootMenu = EditorGUILayout.ObjectField("RootMenu", _rootMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
 
@@ -235,7 +236,7 @@ namespace okitsu.net.SimpleToggleGenerator
             // ExParam
             GUILayout.BeginHorizontal();
             EditorGUI.BeginDisabledGroup(_avatar != null && _avatar.expressionParameters != null);
-            _vrcExpressionParameters = EditorGUILayout.ObjectField("ExParam", _vrcExpressionParameters, typeof(VRCExpressionParameters), false) as VRCExpressionParameters;
+            _vrcExpressionParameters = EditorGUILayout.ObjectField("ExpressionParameters", _vrcExpressionParameters, typeof(VRCExpressionParameters), false) as VRCExpressionParameters;
             if (_avatar != null && _vrcExpressionParameters == null && _avatar.expressionParameters == null)
             {
                 if (GUILayout.Button("Create ExParam", GUILayout.Width(100)))
@@ -254,12 +255,10 @@ namespace okitsu.net.SimpleToggleGenerator
             GUILayout.EndHorizontal();
 
             // WD Base Name
-            _baseNameDBT = EditorGUILayout.TextField(
-                new GUIContent("DBT Base Name", "Base name for non-exclusive layer, state and parameter"),
-                string.IsNullOrEmpty(_baseNameDBT) ? "SimpleToggleGenerator" : _baseNameDBT
+            _blendTreeBaseName = EditorGUILayout.TextField(
+                new GUIContent("BlendTree Base Name", "Base name for non-exclusive layer, blendtree, state and parameter"),
+                string.IsNullOrEmpty(_blendTreeBaseName) ? "SimpleToggleGenerator" : _blendTreeBaseName
             );
-
-            // GUILayout.Space(10);
 
             _foldoutMenu = EditorGUILayout.Foldout(_foldoutMenu, "Advanced Options");
             if (_foldoutMenu)
@@ -302,7 +301,14 @@ namespace okitsu.net.SimpleToggleGenerator
             {
                 if (_toggleGroups.Count > 0)
                 {
-                    bool checkClear = EditorUtility.DisplayDialog("Clear All Groups", "Clear all groups. Are you sure?", "Yes", "Cancel");
+                    string message =
+                        "Clear all groups. Are you sure?";
+                    bool checkClear = EditorUtility.DisplayDialog(
+                        "Clear All Groups",
+                        message,
+                        "Yes",
+                        "Cancel"
+                    );
                     if (checkClear)
                     {
                         _toggleGroups.Clear();
@@ -357,23 +363,22 @@ namespace okitsu.net.SimpleToggleGenerator
                 if (index >= _toggleGroups.Count) return;
                 var group = _toggleGroups[index];
 
-                // --- 共通寸法 ---
                 float lh = UIStyles.LineHeight;            // 1行の高さ
                 float vs = UIStyles.VerticalSpacing;       // 行間
                 float padding = 6f;                        // 枠内の左右余白
                 float xL = rect.x + padding;               // 左端（余白込み）
                 float wL = rect.width - (padding * 2);     // 有効幅（余白込み）
-                float yplus  = rect.y + 1;
+                float yplus = rect.y + 1;
 
-                // --- 背景（helpBox） ---
+                // 背景
                 GUI.Box(new Rect(rect.x, rect.y, rect.width, rect.height), GUIContent.none, EditorStyles.helpBox);
 
-                // --- ヘッダー：Foldout（三角マークのみ） + ラベル + Remove Group ---
-                Rect foldoutRect = new Rect(xL, yplus, 16, lh); 
+                // ヘッダー部分（Foldout）（三角マークのみ）
+                Rect foldoutRect = new Rect(xL, yplus, 16, lh);
                 group.isFoldout = EditorGUI.Foldout(foldoutRect, group.isFoldout, GUIContent.none, false);
 
                 // ラベル部分（ドラッグ用）
-                // Foldout の右にラベルだけ表示する。ここは開閉しないのでドラッグに使える
+                // Foldout の右にラベルだけ表示する。
                 Rect labelRect = new Rect(xL + 18, yplus, wL - 142, lh);
                 EditorGUI.LabelField(labelRect, group.layerName);
 
@@ -409,7 +414,7 @@ namespace okitsu.net.SimpleToggleGenerator
                     );
                     yplus += lh + vs;
 
-                    // AllowDisableAll（Exclusive が false のとき無効）
+                    // AllowDisableAll（非排他モードのとき無効）
                     EditorGUI.BeginDisabledGroup(!group.exclusiveMode);
                     group.allowDisableAll = EditorGUI.Toggle(
                         new Rect(xL, yplus, wL, lh),
@@ -439,7 +444,6 @@ namespace okitsu.net.SimpleToggleGenerator
                         if (selectedIndex == 0) group.parameterType = AnimatorControllerParameterType.Bool;
                         else if (selectedIndex == 1) group.parameterType = AnimatorControllerParameterType.Float;
                         else if (selectedIndex == 2) group.parameterType = AnimatorControllerParameterType.Int;
-
                         yplus += lh + vs;
 
                         // Int 選択時は専用パラメータ名入力
@@ -461,9 +465,9 @@ namespace okitsu.net.SimpleToggleGenerator
                     group.reorderableList.DoList(listRect);
                     yplus += group.reorderableList.GetHeight() + vs;
 
-                    // Add / Clear Buttons
+                    // Add/Clear ボタン
                     const float btnW = 120f;
-                    const float gap  = 10f;
+                    const float gap = 10f;
 
                     if (GUI.Button(new Rect(xL, yplus, btnW, lh), "Add Object"))
                     {
@@ -546,7 +550,7 @@ namespace okitsu.net.SimpleToggleGenerator
             {
                 if (index >= _toggleGroups.Count) return UIStyles.LineHeight;
                 var group = _toggleGroups[index];
-                float height = UIStyles.LineHeight + UIStyles.VerticalSpacing; // Foldout
+                float height = UIStyles.LineHeight + UIStyles.VerticalSpacing;
 
                 if (group.isFoldout)
                 {
@@ -567,7 +571,7 @@ namespace okitsu.net.SimpleToggleGenerator
                     if (group.reorderableList != null)
                         height += group.reorderableList.GetHeight() + UIStyles.VerticalSpacing;
 
-                    // Add/Clear ボタン行
+                    // Add/Clear ボタン
                     height += UIStyles.ButtonRowHeight;
 
                     // Drag & Drop エリア
@@ -606,7 +610,7 @@ namespace okitsu.net.SimpleToggleGenerator
 
                 float lineHeight = EditorGUIUtility.singleLineHeight + 2;
 
-                // --- デフォルトチェックボックス + ObjectField ---
+                // デフォルトチェックボックス + ObjectField
                 float toggleWidth = 20f;
                 Rect toggleRect = new Rect(rect.x, rect.y, toggleWidth, EditorGUIUtility.singleLineHeight);
                 Rect objRect = new Rect(rect.x + toggleWidth, rect.y, rect.width - toggleWidth, EditorGUIUtility.singleLineHeight);
@@ -623,7 +627,7 @@ namespace okitsu.net.SimpleToggleGenerator
 
                 group.objects[index] = (GameObject)EditorGUI.ObjectField(objRect, group.objects[index], typeof(GameObject), true);
 
-                // --- Settings Foldout ---
+                // Settings Foldout
                 while (group.isSettingsFoldout.Count <= index)
                     group.isSettingsFoldout.Add(false);
 
@@ -668,7 +672,6 @@ namespace okitsu.net.SimpleToggleGenerator
                 }
             };
 
-            // 高さ計算を修正
             group.reorderableList.elementHeightCallback = (int index) =>
             {
                 float lineHeight = EditorGUIUtility.singleLineHeight + 2;
@@ -719,7 +722,7 @@ namespace okitsu.net.SimpleToggleGenerator
 
         private static class UIStyles
         {
-            public const float LineHeight = 20f;   // = EditorGUIUtility.singleLineHeight
+            public const float LineHeight = 20f;
             public const float VerticalSpacing = 4f;
             public const float DropAreaHeight = 60f;
             public const float ButtonRowHeight = LineHeight + VerticalSpacing;
@@ -758,13 +761,17 @@ namespace okitsu.net.SimpleToggleGenerator
                 }
                 return false;
             }
-
             if (!_disablecfmdialog && CheckDuplicateLayerNames())
             {
-                string messageLine1 = "Duplicate layer names detected in AnimatorController.\n";
-                string messageLine2 = "Please overwrite or cancel and change the layer name.";
-
-                bool overwrite = EditorUtility.DisplayDialog("Confirm", messageLine1 + messageLine2, "Continue", "Cancel");
+                string message =
+                    "Duplicate layer names detected in AnimatorController.\n" +
+                    "Please overwrite or cancel and change the layer name.";
+                bool overwrite = EditorUtility.DisplayDialog(
+                    "Confirm",
+                    message,
+                    "Continue",
+                    "Cancel"
+                );
 
                 if (!overwrite)
                 {
@@ -773,33 +780,31 @@ namespace okitsu.net.SimpleToggleGenerator
                 }
             }
 
-            string layerNameDBT = _baseNameDBT + " (WD On)";
+            // このスクリプトで生成したBlendTreeが含まれるレイヤーがあるかチェック
+            string brendTreeLayerName = _blendTreeBaseName + " (WD On)";
             bool HasDBTLayer()
             {
-                // if (_animatorController == null) return false;
-
-                if (_animatorController != null && _animatorController.layers.Any(l => l.name == layerNameDBT))
+                if (_animatorController != null && _animatorController.layers.Any(l => l.name == brendTreeLayerName))
                 {
                     return true;
                 }
                 return false;
             }
-
-            // DBTレイヤーが存在する場合クリーンアップ
             if (HasDBTLayer())
             {
-                string messageLine1 = $"Layer \"{layerNameDBT}\" and its BlendTree already exist in AnimatorController.\n";
-                string messageLine2 = "The layer and BlendTree will be removed and regenerated if necessary.";
+                string message =
+                    $"Layer \"{brendTreeLayerName}\" and its BlendTree already exist in AnimatorController.\n" +
+                    "The layer and BlendTree will be removed and regenerated if necessary.";
                 bool overwrite = EditorUtility.DisplayDialog(
                     "DBT Layer Detected",
-                    messageLine1 + messageLine2,
+                    message,
                     "Yes (Remove and Continue)",
                     "Cancel"
                 );
 
                 if (overwrite)
                 {
-                    CleanupDBTLayers(layerNameDBT);
+                    CleanupDBTLayers(brendTreeLayerName);
                 }
                 else
                 {
@@ -810,7 +815,7 @@ namespace okitsu.net.SimpleToggleGenerator
 
             foreach (var toggleGroup in _toggleGroups)
             {
-                GenerateLayerAndClip(toggleGroup, layerNameDBT);
+                GenerateLayerAndClip(toggleGroup, brendTreeLayerName);
             }
 
             if (_vrcExpressionsMenu == null)
@@ -822,6 +827,7 @@ namespace okitsu.net.SimpleToggleGenerator
             {
                 CreateExpressionMenus();
             }
+
             if (_vrcExpressionParameters == null)
             {
                 Debug.LogError("ExpressionParameters are not set on the AvatarDescriptor. Cannot add expression parameters.");
@@ -843,7 +849,7 @@ namespace okitsu.net.SimpleToggleGenerator
         {
             if (_toggleGroups.Count == 0)
             {
-                Debug.LogError("No script groups defined. Please add at least one script group.");
+                Debug.LogError("No groups defined. Please add at least one group.");
                 return false;
             }
             if (_avatar == null)
@@ -868,28 +874,28 @@ namespace okitsu.net.SimpleToggleGenerator
                 if (_enforceParameterType && toggleGroup.parameterType == AnimatorControllerParameterType.Float)
                 {
                     Debug.LogWarning("Note: Enforcing Float parameter type may increase memory usage.");
-                    if (EditorUtility.DisplayDialog(
-                        "Memory Usage Warning",
+                    string message =
                         "Enforcing Float parameter types may increase memory usage.\n\n" +
-                        "See documentation for details:\nhttps://vrc.school/docs/Other/Parameter-Mismatching/",
-                        "OK", "Cancel"))
+                        "See documentation for details:\nhttps://vrc.school/docs/Other/Parameter-Mismatching/";
+                    bool enforceParamType = EditorUtility.DisplayDialog(
+                        "Memory Usage Warning",
+                        message,
+                        "OK",
+                        "Cancel"
+                    );
+                    if (!enforceParamType)
                     {
-                        // 続行＝OK 無操作
-                    }
-                    else
-                    {
-                        // Cancel 選択時は中断または処理キャンセル
                         return false;
                     }
                 }
 
-                // === パラメーター型不一致チェック（排他/非排他共通） ===
+                // パラメーター型不一致チェック（排他/非排他共通）
                 List<(string paramName, AnimatorControllerParameterType selected, AnimatorControllerParameterType actual)> invalidParams = new();
                 foreach (var paramName in toggleGroup.parameterNames)
                 {
                     if (string.IsNullOrEmpty(paramName)) continue;
 
-                    // 🔽 非排他モードでは強制的に Float を期待
+                    // 非排他モードでは強制的に Float を使用
                     var expectedType = toggleGroup.exclusiveMode
                         ? toggleGroup.parameterType
                         : AnimatorControllerParameterType.Float;
@@ -905,10 +911,9 @@ namespace okitsu.net.SimpleToggleGenerator
                 {
                     string paramList = string.Join("\n", invalidParams.Select(p => $"- {p.paramName}: selected {p.selected}, found {p.actual}"));
                     string message =
-                        $"The following parameters do not match the selected type:\n\n" +
+                        "The following parameters do not match the selected type:\n\n" +
                         $"Parameter List:\n{paramList}\n\n" +
-                        $"Do you want to update the parameters and transition conditions and continue?";
-
+                        "Do you want to update the parameters and transition conditions and continue?";
                     bool cont = EditorUtility.DisplayDialog(
                         "Parameter Type Warning",
                         message,
@@ -927,13 +932,12 @@ namespace okitsu.net.SimpleToggleGenerator
         }
 
         // ====コア====
-        private void GenerateLayerAndClip(ToggleGroup toggleGroup,string layerNameDBT)
+        private void GenerateLayerAndClip(ToggleGroup toggleGroup, string layerNameDBT)
         {
-            string parameterNameDBT = _baseNameDBT + "_Blend";
+            string parameterNameDBT = _blendTreeBaseName + "_Blend";
 
             // 同名のレイヤーが既に存在するかチェック
             AnimatorControllerLayer existingLayer = _animatorController.layers.FirstOrDefault(layer => layer.name == toggleGroup.layerName);
-
             if (existingLayer != null)
             {
                 // 同名のレイヤーを削除
@@ -948,6 +952,7 @@ namespace okitsu.net.SimpleToggleGenerator
             {
                 existingParameterNames.Add(parameter.name);
             }
+
             if (toggleGroup.exclusiveMode)
             {
                 string intParameterName = toggleGroup.intParameterName;
@@ -963,7 +968,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 };
                 AssetDatabase.AddObjectToAsset(newLayer.stateMachine, _animatorController);
 
-                // AnimationClipを作成してStateの設定を
+                // AnimationClipを作成してStateの設定をする
                 Dictionary<GameObject, AnimatorState> stateDictionary = new();
                 foreach (var obj in toggleGroup.objects)
                 {
@@ -985,7 +990,6 @@ namespace okitsu.net.SimpleToggleGenerator
                 if (toggleGroup.allowDisableAll)
                 {
                     allDisabledState = newLayer.stateMachine.AddState("AllDisabled");
-                    // newLayer.stateMachine.defaultState = allDisabledState;
                     allDisabledState.motion = CreateDisableAllAnimationClip(toggleGroup.objects, toggleGroup);
                 }
 
@@ -994,9 +998,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 {
                     foreach (var state in newLayer.stateMachine.states.Select(s => s.state))
                     {
-                        // VRCAvatarParameterDriverをすべてのStateに追加
                         VRCAvatarParameterDriver driver = state.AddStateMachineBehaviour<VRCAvatarParameterDriver>();
-                        // Configure driver settings
                         driver.parameters = new List<VRC.SDKBase.VRC_AvatarParameterDriver.Parameter>();
 
                         // VRCAvatarParameterDriverのパラメータを設定
@@ -1062,10 +1064,10 @@ namespace okitsu.net.SimpleToggleGenerator
                             }
                             else
                             {
-                                // それ以外は従来通り
                                 paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj2)];
                                 CreateOrUpdateParameter(paramName, toggleGroup.parameterType);
                             }
+
                             // 遷移条件を設定
                             if (toggleGroup.parameterType == AnimatorControllerParameterType.Bool)
                             {
@@ -1084,14 +1086,14 @@ namespace okitsu.net.SimpleToggleGenerator
                     }
                 }
 
-                // === 戻り遷移の設定 ===
+                // 戻り遷移の設定
                 if (toggleGroup.allowDisableAll && allDisabledState != null)
                 {
-                    // ★ AllowDisableAll が有効なら全ステートから AllDisabledState へ
+                    // AllowDisableAll が有効なら全ステートから AllDisabledState へ
                     foreach (var state in newLayer.stateMachine.states)
                     {
                         if (state.state == null || state.state == allDisabledState)
-                            continue; // 自分自身からは不要
+                            continue;
 
                         AnimatorStateTransition toAllDisabled = state.state.AddTransition(allDisabledState);
                         toAllDisabled.hasExitTime = false;
@@ -1118,6 +1120,7 @@ namespace okitsu.net.SimpleToggleGenerator
                             toAllDisabled.AddCondition(AnimatorConditionMode.Equals, 0f, intParameterName);
                         }
                     }
+
                     // AllDisabledから各Stateへの遷移を追加
                     if (allDisabledState != null)
                     {
@@ -1152,7 +1155,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 }
                 else
                 {
-                    // ★ AllowDisableAll が無効な場合は従来通り DefaultState に戻す
+                    // AllowDisableAll が無効な場合は DefaultState に戻す
                     foreach (var nonDefaultState in newLayer.stateMachine.states)
                     {
                         if (nonDefaultState.state != null && nonDefaultState.state != newLayer.stateMachine.defaultState)
@@ -1186,7 +1189,7 @@ namespace okitsu.net.SimpleToggleGenerator
             }
             else
             {
-                // === 非排他モード ===
+                // 非排他モード
 
                 // 初回なら親レイヤーと親BlendTreeを作成
                 if (_rootNonExclusiveBlendTree == null)
@@ -1217,7 +1220,6 @@ namespace okitsu.net.SimpleToggleGenerator
 
                     _animatorController.AddLayer(_nonExclusiveLayer);
 
-                    // root用パラメータを作成
                     if (!_animatorController.parameters.Any(p => p.name == parameterNameDBT))
                     {
                         var parameter = new AnimatorControllerParameter
@@ -1230,26 +1232,26 @@ namespace okitsu.net.SimpleToggleGenerator
                     }
                 }
 
-                // === グループ用 Direct BlendTree ===
+                // グループ用 Direct BlendTree
                 BlendTree groupTree = _rootNonExclusiveBlendTree.CreateBlendTreeChild(0f);
                 groupTree.name = $"{toggleGroup.layerName}_GroupTree";
                 groupTree.blendType = BlendTreeType.Direct;
                 groupTree.useAutomaticThresholds = false;
 
-                // グループを親に追加（directBlendParameter は固定）
+                // グループを親に追加
                 var rootChildren = _rootNonExclusiveBlendTree.children.ToList();
                 var lastChild = rootChildren[rootChildren.Count - 1];
                 lastChild.directBlendParameter = parameterNameDBT;
                 rootChildren[rootChildren.Count - 1] = lastChild;
                 _rootNonExclusiveBlendTree.children = rootChildren.ToArray();
 
-                // === 各オブジェクト用 1D BlendTree ===
+                // 各オブジェクト用 1D BlendTree
                 foreach (var obj in toggleGroup.objects)
                 {
                     string paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)];
                     CreateOrUpdateParameter(paramName, AnimatorControllerParameterType.Float);
 
-                    // グループDirectの子として1D BlendTreeを追加
+                    // オブジェクト用 Direct BlendTree
                     BlendTree objTree = groupTree.CreateBlendTreeChild(0f);
                     objTree.name = $"{obj.name}_BlendTree";
                     objTree.blendType = BlendTreeType.Simple1D;
@@ -1262,7 +1264,7 @@ namespace okitsu.net.SimpleToggleGenerator
                     objTree.AddChild(offClip, 0f);
                     objTree.AddChild(onClip, 1f);
 
-                    // 子の directBlendParameter を設定
+                    // オブジェクト用の 1D BlendTree をグループBlendTreeに追加
                     var groupChildren = groupTree.children.ToList();
                     var lastGroupChild = groupChildren[groupChildren.Count - 1];
                     lastGroupChild.directBlendParameter = parameterNameDBT;
@@ -1276,7 +1278,7 @@ namespace okitsu.net.SimpleToggleGenerator
         {
             if (_animatorController == null) return;
 
-            // DBTレイヤーを削除
+            // BlendTree のレイヤーを削除
             var layers = _animatorController.layers.ToList();
             int removed = layers.RemoveAll(l => l.name == layerNameDBT);
             if (removed > 0)
@@ -1285,7 +1287,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 Debug.Log($"Removed {removed} DBT layers from {_animatorController.name}");
             }
 
-            // BlendTreeや参照をクリア
+            // BlendTree や参照をクリア
             if (_rootNonExclusiveBlendTree != null)
             {
                 UnityEngine.Object.DestroyImmediate(_rootNonExclusiveBlendTree, true);
@@ -1429,7 +1431,6 @@ namespace okitsu.net.SimpleToggleGenerator
             clip.wrapMode = WrapMode.Once;
             return SaveClip(clip, toggleGroup.layerName);
         }
-
         private AnimationClip CreateDisableAllAnimationClip(List<GameObject> groupObjects, ToggleGroup toggleGroup)
         {
             AnimationClip clip = new();
@@ -1457,7 +1458,6 @@ namespace okitsu.net.SimpleToggleGenerator
             clip.wrapMode = WrapMode.Once;
             return SaveClip(clip, toggleGroup.layerName);
         }
-
         private AnimationClip CreateSingleDisableClip(GameObject obj, ToggleGroup toggleGroup)
         {
             AnimationClip clip = new();
@@ -1520,7 +1520,7 @@ namespace okitsu.net.SimpleToggleGenerator
             }
             else
             {
-                // 従来通り RootMenuName を使用
+                // RootMenuName を使用
                 VRCExpressionsMenu existingMenu =
                     AssetDatabase.LoadAssetAtPath<VRCExpressionsMenu>($"{rootMenuPath}/{_rootMenuName}.asset");
                 if (existingMenu != null)
@@ -1800,7 +1800,7 @@ namespace okitsu.net.SimpleToggleGenerator
             EditorUtility.SetDirty(rootExpressionsMenu);
             AssetDatabase.SaveAssets();
 
-            // ★ RootMenu が指定されている場合は _vrcExpressionsMenu への追加をスキップする
+            // RootMenu が指定されている場合は _vrcExpressionsMenu への追加をスキップする
             if (_rootMenu != null)
             {
                 return;
@@ -1900,7 +1900,7 @@ namespace okitsu.net.SimpleToggleGenerator
                         bool synced = i < toggleGroup.sync.Count ? toggleGroup.sync[i] : true;
                         var paramType = VRCExpressionParameters.ValueType.Bool;
 
-                        // 🔽 enforceParameterType が true のときのみ ToggleGroup の設定を尊重
+                        // enforceParameterType が true のときのみ ToggleGroup の設定を尊重
                         if (_enforceParameterType)
                         {
                             if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
@@ -1956,7 +1956,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 savePath = _savePath,
                 rootMenuPath = _rootMenu != null ? AssetDatabase.GetAssetPath(_rootMenu) : string.Empty,
                 rootMenuName = _rootMenuName,
-                baseNameDBT = _baseNameDBT,
+                baseNameDBT = _blendTreeBaseName,
                 toggleGroups = _toggleGroups.Select(group => new SerializableToggleGroup(group)).ToList()
             };
 
@@ -1989,7 +1989,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 _savePath = saveData.savePath;
                 _rootMenu = AssetDatabase.LoadAssetAtPath<VRCExpressionsMenu>(saveData.rootMenuPath);
                 _rootMenuName = saveData.rootMenuName;
-                _baseNameDBT = saveData.baseNameDBT;
+                _blendTreeBaseName = saveData.baseNameDBT;
 
                 _toggleGroups.Clear();
                 foreach (var serializableGroup in saveData.toggleGroups)
