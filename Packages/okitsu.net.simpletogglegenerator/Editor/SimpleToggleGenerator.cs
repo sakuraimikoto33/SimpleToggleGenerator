@@ -774,13 +774,38 @@ namespace okitsu.net.SimpleToggleGenerator
             }
 
             string layerNameDBT = _baseNameDBT + " (WD On)";
-            bool hasDBTLayer = _animatorController != null &&
-                            _animatorController.layers.Any(l => l.name == layerNameDBT);
-
-            // DBTレイヤーが存在する場合のみクリーンアップ
-            if (hasDBTLayer)
+            bool HasDBTLayer()
             {
-                CleanupDBTLayers(layerNameDBT);
+                // if (_animatorController == null) return false;
+
+                if (_animatorController != null && _animatorController.layers.Any(l => l.name == layerNameDBT))
+                {
+                    return true;
+                }
+                return false;
+            }
+
+            // DBTレイヤーが存在する場合クリーンアップ
+            if (HasDBTLayer())
+            {
+                string messageLine1 = $"Layer \"{layerNameDBT}\" and its BlendTree already exist in AnimatorController.\n";
+                string messageLine2 = "The layer and BlendTree will be removed and regenerated if necessary.";
+                bool overwrite = EditorUtility.DisplayDialog(
+                    "DBT Layer Detected",
+                    messageLine1 + messageLine2,
+                    "Yes (Remove and Continue)",
+                    "Cancel"
+                );
+
+                if (overwrite)
+                {
+                    CleanupDBTLayers(layerNameDBT);
+                }
+                else
+                {
+                    Debug.Log("Processing has been canceled by user.");
+                    return;
+                }
             }
 
             foreach (var toggleGroup in _toggleGroups)
