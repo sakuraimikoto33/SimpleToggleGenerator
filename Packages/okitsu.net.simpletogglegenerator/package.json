@@ -1,7 +1,7 @@
 {
   "name": "okitsu.net.simpletogglegenerator",
   "displayName": "SimpleToggleGenerator",
-  "version": "0.9.3",
+  "version": "0.9.5",
   "unity": "2022.3",
   "description": "A simple editor extension for creating toggles, supporting both exclusive and non-exclusive toggles.",
   "vrchatVersion": "2022.1.1",
