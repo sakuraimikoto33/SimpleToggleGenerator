@@ -1,9 +1,9 @@
 {
   "name": "okitsu.net.simpletogglegenerator",
   "displayName": "SimpleToggleGenerator",
-  "version": "0.9.9",
+  "version": "1.0.0",
   "unity": "2022.3",
-  "description": "A simple editor extension for creating toggles, supporting both exclusive and non-exclusive toggles.",
+  "description": "A simple editor extension that supports creating exclusive/non-exclusive toggles. In both modes, one layer is created for each group. (In the exclusive BlendTreeMode, one layer is added.)",
   "vrchatVersion": "2022.1.1",
   "vpmDependencies" : {
     "com.vrchat.avatars" : "3.8.x"
