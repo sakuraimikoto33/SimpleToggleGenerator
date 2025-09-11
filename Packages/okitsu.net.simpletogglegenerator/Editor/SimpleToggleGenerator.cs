@@ -99,6 +99,7 @@ namespace okitsu.net.SimpleToggleGenerator
         private VRCAvatarDescriptor _previousAvatar;
         private BlendTree _rootNonExclusiveBlendTree;
         private AnimatorControllerLayer _nonExclusiveLayer;
+        private AnimationClip _doNotEditClip;
 
         // ====GUI====
         private void OnGUI()
@@ -323,7 +324,7 @@ namespace okitsu.net.SimpleToggleGenerator
             {
                 foreach (var group in _toggleGroups)
                 {
-                    if (!group.objects.Any(obj => obj != null && obj.activeSelf) && group.objects.Count > 0 && !group.allowDisableAll)
+                    if (!group.objects.Any(obj => obj != null && obj.activeSelf) && group.objects.Count > 0 && !group.allowDisableAll && group.exclusiveMode)
                     {
                         group.objects[0].SetActive(true);
                     }
@@ -408,11 +409,32 @@ namespace okitsu.net.SimpleToggleGenerator
                     yplus += lh + vs;
 
                     // Exclusive Mode
+                    bool prevExclusiveMode = group.exclusiveMode;
                     group.exclusiveMode = EditorGUI.Toggle(
                         new Rect(xL, yplus, wL, lh),
                         "Exclusive Mode", group.exclusiveMode
                     );
                     yplus += lh + vs;
+                    if (!prevExclusiveMode && group.exclusiveMode)
+                    {
+                        bool firstFound = false;
+                        for (int k = 0; k < group.objects.Count; k++)
+                        {
+                            if (group.objects[k] != null)
+                            {
+                                if (!firstFound)
+                                {
+                                    // 最初の有効オブジェクトを残す（無効が1つもなければ最初の要素を有効にする）
+                                    group.objects[k].SetActive(true);
+                                    firstFound = true;
+                                }
+                                else
+                                {
+                                    group.objects[k].SetActive(false);
+                                }
+                            }
+                        }
+                    }
 
                     // AllowDisableAll（非排他モードのとき無効）
                     EditorGUI.BeginDisabledGroup(!group.exclusiveMode);
@@ -615,13 +637,40 @@ namespace okitsu.net.SimpleToggleGenerator
                 Rect toggleRect = new Rect(rect.x, rect.y, toggleWidth, EditorGUIUtility.singleLineHeight);
                 Rect objRect = new Rect(rect.x + toggleWidth, rect.y, rect.width - toggleWidth, EditorGUIUtility.singleLineHeight);
 
-                bool isChecked = GUI.Toggle(toggleRect, group.objects[index] != null && group.objects[index].activeSelf, GUIContent.none);
-                if (isChecked)
+                bool currentState = group.objects[index] != null && group.objects[index].activeSelf;
+                bool newState = GUI.Toggle(toggleRect, currentState, GUIContent.none);
+
+                if (newState != currentState)
                 {
-                    for (int k = 0; k < group.objects.Count; k++)
+                    if (group.exclusiveMode)
                     {
-                        if (group.objects[k] != null)
-                            group.objects[k].SetActive(k == index);
+                        if (newState)
+                        {
+                            // 排他モード → 1つだけ有効にする
+                            for (int k = 0; k < group.objects.Count; k++)
+                            {
+                                if (group.objects[k] != null)
+                                    group.objects[k].SetActive(k == index);
+                            }
+                        }
+                        else if (group.allowDisableAll)
+                        {
+                            // 排他モード + allowDisableAll → 全無効化を許可
+                            if (group.objects[index] != null)
+                                group.objects[index].SetActive(false);
+                        }
+                        else
+                        {
+                            // 排他モード + allowDisableAll無効 → 少なくとも1つ有効に保つ
+                            if (group.objects[index] != null)
+                                group.objects[index].SetActive(true);
+                        }
+                    }
+                    else
+                    {
+                        // 非排他モード → トグル状態をそのまま反映（複数有効化OK）
+                        if (group.objects[index] != null)
+                            group.objects[index].SetActive(newState);
                     }
                 }
 
@@ -782,7 +831,7 @@ namespace okitsu.net.SimpleToggleGenerator
 
             // このスクリプトで生成したBlendTreeが含まれるレイヤーがあるかチェック
             string brendTreeLayerName = _blendTreeBaseName + " (WD On)";
-            bool HasDBTLayer()
+            bool HasBlendTreeLayer()
             {
                 if (_animatorController != null && _animatorController.layers.Any(l => l.name == brendTreeLayerName))
                 {
@@ -790,13 +839,13 @@ namespace okitsu.net.SimpleToggleGenerator
                 }
                 return false;
             }
-            if (HasDBTLayer())
+            if (HasBlendTreeLayer())
             {
                 string message =
                     $"Layer \"{brendTreeLayerName}\" and its BlendTree already exist in AnimatorController.\n" +
                     "The layer and BlendTree will be removed and regenerated if necessary.";
                 bool overwrite = EditorUtility.DisplayDialog(
-                    "DBT Layer Detected",
+                    "BlendTree Layer Detected",
                     message,
                     "Yes (Remove and Continue)",
                     "Cancel"
@@ -804,7 +853,7 @@ namespace okitsu.net.SimpleToggleGenerator
 
                 if (overwrite)
                 {
-                    CleanupDBTLayers(brendTreeLayerName);
+                    CleanupBlendTreeLayers(brendTreeLayerName);
                 }
                 else
                 {
@@ -932,9 +981,9 @@ namespace okitsu.net.SimpleToggleGenerator
         }
 
         // ====コア====
-        private void GenerateLayerAndClip(ToggleGroup toggleGroup, string layerNameDBT)
+        private void GenerateLayerAndClip(ToggleGroup toggleGroup, string layerNameBlendTree)
         {
-            string parameterNameDBT = _blendTreeBaseName + "_Blend";
+            string parameterNameBlendTree = _blendTreeBaseName + "_Blend";
 
             // 同名のレイヤーが既に存在するかチェック
             AnimatorControllerLayer existingLayer = _animatorController.layers.FirstOrDefault(layer => layer.name == toggleGroup.layerName);
@@ -955,91 +1004,254 @@ namespace okitsu.net.SimpleToggleGenerator
 
             if (toggleGroup.exclusiveMode)
             {
+                // 排他モード
                 string intParameterName = toggleGroup.intParameterName;
-                // 新しいレイヤーを作成
-                AnimatorControllerLayer newLayer = new()
+                if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
                 {
-                    name = toggleGroup.layerName,
+                    CreateGroupBlendTree(toggleGroup, parameterNameBlendTree, layerNameBlendTree);
+                }
+                GenerateExclusiveLayer(toggleGroup ,intParameterName);
+            }
+            else
+            {
+                // 非排他モード
+                CreateGroupBlendTree(toggleGroup, parameterNameBlendTree, layerNameBlendTree);
+            }
+        }
+
+        private void CleanupBlendTreeLayers(string layerNameBlendTree)
+        {
+            if (_animatorController == null) return;
+
+            // BlendTree のレイヤーを削除
+            var layers = _animatorController.layers.ToList();
+            int removed = layers.RemoveAll(l => l.name == layerNameBlendTree);
+            if (removed > 0)
+            {
+                _animatorController.layers = layers.ToArray();
+                Debug.Log($"Removed {removed} BlendTree layers from {_animatorController.name}");
+            }
+
+            // BlendTree や参照をクリア
+            if (_rootNonExclusiveBlendTree != null)
+            {
+                UnityEngine.Object.DestroyImmediate(_rootNonExclusiveBlendTree, true);
+                _rootNonExclusiveBlendTree = null;
+            }
+            if (_nonExclusiveLayer != null)
+            {
+                _nonExclusiveLayer = null;
+            }
+        }
+
+        private BlendTree CreateGroupBlendTree(ToggleGroup toggleGroup, string parameterNameBlendTree, string layerNameBlendTree)
+        {
+            // 初回なら親レイヤーと親BlendTreeを作成
+            if (_rootNonExclusiveBlendTree == null)
+            {
+                _nonExclusiveLayer = new AnimatorControllerLayer
+                {
+                    name = layerNameBlendTree,
                     stateMachine = new AnimatorStateMachine
                     {
-                        name = toggleGroup.layerName,
+                        name = layerNameBlendTree,
                         hideFlags = HideFlags.HideInHierarchy
                     }
                 };
-                AssetDatabase.AddObjectToAsset(newLayer.stateMachine, _animatorController);
+                AssetDatabase.AddObjectToAsset(_nonExclusiveLayer.stateMachine, _animatorController);
 
-                // AnimationClipを作成してStateの設定をする
-                Dictionary<GameObject, AnimatorState> stateDictionary = new();
+                _rootNonExclusiveBlendTree = new BlendTree
+                {
+                    name = layerNameBlendTree,
+                    blendType = BlendTreeType.Direct,
+                    useAutomaticThresholds = false
+                };
+                AssetDatabase.AddObjectToAsset(_rootNonExclusiveBlendTree, _animatorController);
+
+                AnimatorState rootState = _nonExclusiveLayer.stateMachine.AddState(layerNameBlendTree);
+                rootState.motion = _rootNonExclusiveBlendTree;
+                rootState.writeDefaultValues = true;
+                _nonExclusiveLayer.stateMachine.defaultState = rootState;
+
+                _animatorController.AddLayer(_nonExclusiveLayer);
+
+                if (!_animatorController.parameters.Any(p => p.name == parameterNameBlendTree))
+                {
+                    var parameter = new AnimatorControllerParameter
+                    {
+                        name = parameterNameBlendTree,
+                        type = AnimatorControllerParameterType.Float,
+                        defaultFloat = 1f
+                    };
+                    _animatorController.AddParameter(parameter);
+                }
+            }
+
+            // グループ用 Direct BlendTree
+            BlendTree groupTree = _rootNonExclusiveBlendTree.CreateBlendTreeChild(0f);
+            groupTree.name = $"{toggleGroup.layerName}_GroupTree";
+            groupTree.blendType = BlendTreeType.Direct;
+            groupTree.useAutomaticThresholds = false;
+
+            // グループを親に追加
+            var rootChildren = _rootNonExclusiveBlendTree.children.ToList();
+            var lastChild = rootChildren[rootChildren.Count - 1];
+            lastChild.directBlendParameter = parameterNameBlendTree;
+            rootChildren[rootChildren.Count - 1] = lastChild;
+            _rootNonExclusiveBlendTree.children = rootChildren.ToArray();
+
+            // 各オブジェクト用 1D BlendTree
+            foreach (var obj in toggleGroup.objects)
+            {
+                string paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)];
+                CreateOrUpdateParameter(paramName, AnimatorControllerParameterType.Float);
+
+                // オブジェクト用 Direct BlendTree
+                BlendTree objTree = groupTree.CreateBlendTreeChild(0f);
+                objTree.name = $"{obj.name}_BlendTree";
+                objTree.blendType = BlendTreeType.Simple1D;
+                objTree.useAutomaticThresholds = false;
+                objTree.blendParameter = paramName;
+
+                // 0=Off, 1=On のクリップ
+                AnimationClip offClip = CreateSingleDisableClip(obj, toggleGroup);
+                AnimationClip onClip = CreateSingleEnableClip(obj, toggleGroup);
+                objTree.AddChild(offClip, 0f);
+                objTree.AddChild(onClip, 1f);
+
+                // オブジェクト用の 1D BlendTree をグループBlendTreeに追加
+                var groupChildren = groupTree.children.ToList();
+                var lastGroupChild = groupChildren[groupChildren.Count - 1];
+                lastGroupChild.directBlendParameter = parameterNameBlendTree;
+                groupChildren[groupChildren.Count - 1] = lastGroupChild;
+                groupTree.children = groupChildren.ToArray();
+            }
+            return groupTree;
+        }
+
+        private void GenerateExclusiveLayer(ToggleGroup toggleGroup, string intParameterName)
+        {
+            // レイヤー作成
+            AnimatorControllerLayer driverLayer = new AnimatorControllerLayer
+            {
+                name = toggleGroup.layerName,
+                stateMachine = new AnimatorStateMachine
+                {
+                    name = toggleGroup.layerName,
+                    hideFlags = HideFlags.HideInHierarchy
+                }
+            };
+            AssetDatabase.AddObjectToAsset(driverLayer.stateMachine, _animatorController);
+
+            // AnimationClipを作成してStateの設定をする
+            Dictionary<GameObject, AnimatorState> stateDictionary = new Dictionary<GameObject, AnimatorState>();
+            foreach (var obj in toggleGroup.objects)
+            {
+                string stateName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)];
+                AnimatorState state = driverLayer.stateMachine.AddState(stateName);
+
+                if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                {
+                    // Float → _doNotEditClip を使い回す
+                    state.motion = GetDoNotEditClip();
+                }
+                else
+                {
+                    // Bool / Int → オブジェクトを有効にする AnimationClip を作成
+                    state.motion = CreateAnimationClip(obj, toggleGroup.objects, toggleGroup);
+                }
+                state.writeDefaultValues = false;
+                stateDictionary.Add(obj, state);
+
+                // 有効になっているオブジェクトを DefaultState に設定
+                if (obj.activeSelf && !toggleGroup.allowDisableAll)
+                {
+                    driverLayer.stateMachine.defaultState = state;
+                }
+            }
+
+            // AllDisabled ステート
+            AnimatorState allDisabledState = null;
+            if (toggleGroup.allowDisableAll)
+            {
+                allDisabledState = driverLayer.stateMachine.AddState("AllDisabled");
+                if (toggleGroup.parameterType == AnimatorControllerParameterType.Float)
+                {
+                    allDisabledState.motion = GetDoNotEditClip();
+                }
+                else
+                {
+                    allDisabledState.motion = CreateDisableAllAnimationClip(toggleGroup.objects, toggleGroup);
+                }
+                allDisabledState.writeDefaultValues = false;
+            }
+
+            if (toggleGroup.allowDisableAll && allDisabledState != null)
+            {
+                bool allInactive = true;
                 foreach (var obj in toggleGroup.objects)
                 {
-                    string stateName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)];
-                    AnimatorState state = newLayer.stateMachine.AddState(stateName);
-
-                    state.motion = CreateAnimationClip(obj, toggleGroup.objects, toggleGroup);
-                    state.writeDefaultValues = false;
-                    stateDictionary.Add(obj, state);
-
-                    // チェックボックスが有効なオブジェクトが存在しない場合の処理
-                    if (obj.activeSelf && !toggleGroup.allowDisableAll)
+                    if (obj != null && obj.activeInHierarchy)
                     {
-                        newLayer.stateMachine.defaultState = state;
+                        allInactive = false;
+                        break;
                     }
                 }
 
-                AnimatorState allDisabledState = null;
-                if (toggleGroup.allowDisableAll)
+                if (allInactive)
                 {
-                    allDisabledState = newLayer.stateMachine.AddState("AllDisabled");
-                    allDisabledState.motion = CreateDisableAllAnimationClip(toggleGroup.objects, toggleGroup);
+                    // 全て非アクティブなら AllDisabled をデフォルトステートにする
+                    driverLayer.stateMachine.defaultState = allDisabledState;
                 }
+            }
 
-                // VRCAvatarParameterDriverをすべてのStateに追加
-                if (toggleGroup.parameterType != AnimatorControllerParameterType.Int)
+            // VRCAvatarParameterDriverをすべてのStateに追加
+            if (toggleGroup.parameterType != AnimatorControllerParameterType.Int)
+            {
+                foreach (var state in driverLayer.stateMachine.states.Select(s => s.state))
                 {
-                    foreach (var state in newLayer.stateMachine.states.Select(s => s.state))
+                    VRCAvatarParameterDriver driver = state.AddStateMachineBehaviour<VRCAvatarParameterDriver>();
+                    driver.parameters = new List<VRC.SDKBase.VRC_AvatarParameterDriver.Parameter>();
+
+                    // VRCAvatarParameterDriverのパラメータを設定
+                    foreach (var param in toggleGroup.parameterNames)
                     {
-                        VRCAvatarParameterDriver driver = state.AddStateMachineBehaviour<VRCAvatarParameterDriver>();
-                        driver.parameters = new List<VRC.SDKBase.VRC_AvatarParameterDriver.Parameter>();
-
-                        // VRCAvatarParameterDriverのパラメータを設定
-                        foreach (var param in toggleGroup.parameterNames)
+                        VRC.SDKBase.VRC_AvatarParameterDriver.Parameter driverParam = new()
                         {
-                            VRC.SDKBase.VRC_AvatarParameterDriver.Parameter driverParam = new()
-                            {
-                                name = param
-                            };
+                            name = param
+                        };
 
-                            // StateがDefault Stateか確認
-                            if (state != newLayer.stateMachine.defaultState)
+                        // StateがDefault Stateか確認
+                        if (state != driverLayer.stateMachine.defaultState)
+                        {
+                            // Default Stateでない場合、自己遷移条件を除くすべてのパラメータを設定
+                            if (param != state.name)
                             {
-                                // Default Stateでない場合、自己遷移条件を除くすべてのパラメータを設定
-                                if (param != state.name)
-                                {
-                                    driverParam.value = 0;
-                                    driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
-                                    driver.parameters.Add(driverParam);
-                                }
-                            }
-                            else
-                            {
-                                // Default Stateの場合、すべての遷移条件のパラメーターを設定
-                                if (param != state.name)
-                                {
-                                    driverParam.value = 0;
-                                    driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
-                                }
-                                else
-                                {
-                                    driverParam.value = 1;
-                                    driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
-                                }
+                                driverParam.value = 0;
+                                driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
                                 driver.parameters.Add(driverParam);
                             }
                         }
+                        else
+                        {
+                            // Default Stateの場合、すべての遷移条件のパラメーターを設定
+                            if (param != state.name)
+                            {
+                                driverParam.value = 0;
+                                driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
+                            }
+                            else
+                            {
+                                driverParam.value = 1;
+                                driverParam.type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set;
+                            }
+                            driver.parameters.Add(driverParam);
+                        }
                     }
                 }
+            }
 
-                // State間の遷移を設定
+            // State間の遷移を設定
                 foreach (var obj1 in toggleGroup.objects)
                 {
                     foreach (var obj2 in toggleGroup.objects)
@@ -1090,7 +1302,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 if (toggleGroup.allowDisableAll && allDisabledState != null)
                 {
                     // AllowDisableAll が有効なら全ステートから AllDisabledState へ
-                    foreach (var state in newLayer.stateMachine.states)
+                    foreach (var state in driverLayer.stateMachine.states)
                     {
                         if (state.state == null || state.state == allDisabledState)
                             continue;
@@ -1156,11 +1368,11 @@ namespace okitsu.net.SimpleToggleGenerator
                 else
                 {
                     // AllowDisableAll が無効な場合は DefaultState に戻す
-                    foreach (var nonDefaultState in newLayer.stateMachine.states)
+                    foreach (var nonDefaultState in driverLayer.stateMachine.states)
                     {
-                        if (nonDefaultState.state != null && nonDefaultState.state != newLayer.stateMachine.defaultState)
+                        if (nonDefaultState.state != null && nonDefaultState.state != driverLayer.stateMachine.defaultState)
                         {
-                            AnimatorStateTransition defaultTransition = nonDefaultState.state.AddTransition(newLayer.stateMachine.defaultState);
+                            AnimatorStateTransition defaultTransition = nonDefaultState.state.AddTransition(driverLayer.stateMachine.defaultState);
                             defaultTransition.hasExitTime = false;
                             defaultTransition.duration = 0f;
                             defaultTransition.exitTime = 0f;
@@ -1176,127 +1388,18 @@ namespace okitsu.net.SimpleToggleGenerator
                                 {
                                     defaultTransition.AddCondition(AnimatorConditionMode.Less, 0.5f, param);
                                 }
-                                else if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
-                                {
-                                    defaultTransition.AddCondition(AnimatorConditionMode.Equals, 0f, intParameterName);
-                                }
+                            }
+
+                            if (toggleGroup.parameterType == AnimatorControllerParameterType.Int)
+                            {
+                                defaultTransition.AddCondition(AnimatorConditionMode.Equals, 0f, intParameterName);
                             }
                         }
                     }
                 }
 
-                _animatorController.AddLayer(newLayer);
-            }
-            else
-            {
-                // 非排他モード
-
-                // 初回なら親レイヤーと親BlendTreeを作成
-                if (_rootNonExclusiveBlendTree == null)
-                {
-                    _nonExclusiveLayer = new AnimatorControllerLayer
-                    {
-                        name = layerNameDBT,
-                        stateMachine = new AnimatorStateMachine
-                        {
-                            name = layerNameDBT,
-                            hideFlags = HideFlags.HideInHierarchy
-                        }
-                    };
-                    AssetDatabase.AddObjectToAsset(_nonExclusiveLayer.stateMachine, _animatorController);
-
-                    _rootNonExclusiveBlendTree = new BlendTree
-                    {
-                        name = layerNameDBT,
-                        blendType = BlendTreeType.Direct,
-                        useAutomaticThresholds = false
-                    };
-                    AssetDatabase.AddObjectToAsset(_rootNonExclusiveBlendTree, _animatorController);
-
-                    AnimatorState rootState = _nonExclusiveLayer.stateMachine.AddState(layerNameDBT);
-                    rootState.motion = _rootNonExclusiveBlendTree;
-                    rootState.writeDefaultValues = true;
-                    _nonExclusiveLayer.stateMachine.defaultState = rootState;
-
-                    _animatorController.AddLayer(_nonExclusiveLayer);
-
-                    if (!_animatorController.parameters.Any(p => p.name == parameterNameDBT))
-                    {
-                        var parameter = new AnimatorControllerParameter
-                        {
-                            name = parameterNameDBT,
-                            type = AnimatorControllerParameterType.Float,
-                            defaultFloat = 1f
-                        };
-                        _animatorController.AddParameter(parameter);
-                    }
-                }
-
-                // グループ用 Direct BlendTree
-                BlendTree groupTree = _rootNonExclusiveBlendTree.CreateBlendTreeChild(0f);
-                groupTree.name = $"{toggleGroup.layerName}_GroupTree";
-                groupTree.blendType = BlendTreeType.Direct;
-                groupTree.useAutomaticThresholds = false;
-
-                // グループを親に追加
-                var rootChildren = _rootNonExclusiveBlendTree.children.ToList();
-                var lastChild = rootChildren[rootChildren.Count - 1];
-                lastChild.directBlendParameter = parameterNameDBT;
-                rootChildren[rootChildren.Count - 1] = lastChild;
-                _rootNonExclusiveBlendTree.children = rootChildren.ToArray();
-
-                // 各オブジェクト用 1D BlendTree
-                foreach (var obj in toggleGroup.objects)
-                {
-                    string paramName = toggleGroup.parameterNames[toggleGroup.objects.IndexOf(obj)];
-                    CreateOrUpdateParameter(paramName, AnimatorControllerParameterType.Float);
-
-                    // オブジェクト用 Direct BlendTree
-                    BlendTree objTree = groupTree.CreateBlendTreeChild(0f);
-                    objTree.name = $"{obj.name}_BlendTree";
-                    objTree.blendType = BlendTreeType.Simple1D;
-                    objTree.useAutomaticThresholds = false;
-                    objTree.blendParameter = paramName;
-
-                    // 0=Off, 1=On のクリップ
-                    AnimationClip offClip = CreateSingleDisableClip(obj, toggleGroup);
-                    AnimationClip onClip = CreateSingleEnableClip(obj, toggleGroup);
-                    objTree.AddChild(offClip, 0f);
-                    objTree.AddChild(onClip, 1f);
-
-                    // オブジェクト用の 1D BlendTree をグループBlendTreeに追加
-                    var groupChildren = groupTree.children.ToList();
-                    var lastGroupChild = groupChildren[groupChildren.Count - 1];
-                    lastGroupChild.directBlendParameter = parameterNameDBT;
-                    groupChildren[groupChildren.Count - 1] = lastGroupChild;
-                    groupTree.children = groupChildren.ToArray();
-                }
-            }
-        }
-
-        private void CleanupDBTLayers(string layerNameDBT)
-        {
-            if (_animatorController == null) return;
-
-            // BlendTree のレイヤーを削除
-            var layers = _animatorController.layers.ToList();
-            int removed = layers.RemoveAll(l => l.name == layerNameDBT);
-            if (removed > 0)
-            {
-                _animatorController.layers = layers.ToArray();
-                Debug.Log($"Removed {removed} DBT layers from {_animatorController.name}");
-            }
-
-            // BlendTree や参照をクリア
-            if (_rootNonExclusiveBlendTree != null)
-            {
-                UnityEngine.Object.DestroyImmediate(_rootNonExclusiveBlendTree, true);
-                _rootNonExclusiveBlendTree = null;
-            }
-            if (_nonExclusiveLayer != null)
-            {
-                _nonExclusiveLayer = null;
-            }
+            // AnimatorController にレイヤー追加
+            _animatorController.AddLayer(driverLayer);
         }
 
         // ====パラメーター作成====
@@ -1410,7 +1513,7 @@ namespace okitsu.net.SimpleToggleGenerator
             return condition;
         }
 
-        // ====排他モードでのAnimation Clip作成====
+        // ====排他モードかつ Bool/Int でのAnimation Clip作成====
         private AnimationClip CreateAnimationClip(GameObject obj, List<GameObject> groupObjects, ToggleGroup toggleGroup)
         {
             AnimationClip clip = new();
@@ -1444,6 +1547,25 @@ namespace okitsu.net.SimpleToggleGenerator
 
             clip.wrapMode = WrapMode.Once;
             return SaveClip(clip, toggleGroup.layerName);
+        }
+
+        // ===排他モードかつ Float でのダミークリップ作成===
+        private AnimationClip GetDoNotEditClip()
+        {
+            if (_doNotEditClip != null)
+                return _doNotEditClip;
+
+            AnimationClip clip = new AnimationClip();
+            clip.name = "Empty";
+
+            string path;
+            path = "_doNotEdit"; // 存在しない場合もカーブを作成
+
+            clip.SetCurve(path, typeof(GameObject), "m_IsActive", AnimationCurve.Constant(0f, 0f, 1f));
+            clip.wrapMode = WrapMode.Once;
+
+            _doNotEditClip = SaveClip(clip, "Empty");
+            return _doNotEditClip;
         }
 
         // ====非排他モードでのAnimation Clip作成====
@@ -1956,7 +2078,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 savePath = _savePath,
                 rootMenuPath = _rootMenu != null ? AssetDatabase.GetAssetPath(_rootMenu) : string.Empty,
                 rootMenuName = _rootMenuName,
-                baseNameDBT = _blendTreeBaseName,
+                baseBlendName = _blendTreeBaseName,
                 toggleGroups = _toggleGroups.Select(group => new SerializableToggleGroup(group)).ToList()
             };
 
@@ -1989,7 +2111,7 @@ namespace okitsu.net.SimpleToggleGenerator
                 _savePath = saveData.savePath;
                 _rootMenu = AssetDatabase.LoadAssetAtPath<VRCExpressionsMenu>(saveData.rootMenuPath);
                 _rootMenuName = saveData.rootMenuName;
-                _blendTreeBaseName = saveData.baseNameDBT;
+                _blendTreeBaseName = saveData.baseBlendName;
 
                 _toggleGroups.Clear();
                 foreach (var serializableGroup in saveData.toggleGroups)
@@ -2128,7 +2250,7 @@ namespace okitsu.net.SimpleToggleGenerator
             public string savePath;
             public string rootMenuPath;
             public string rootMenuName;
-            public string baseNameDBT;
+            public string baseBlendName;
             public List<SerializableToggleGroup> toggleGroups = new List<SerializableToggleGroup>();
         }
     }
