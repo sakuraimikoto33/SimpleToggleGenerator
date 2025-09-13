@@ -2216,8 +2216,8 @@ namespace okitsu.net.SimpleToggleGenerator
         {
             public string groupName;
             public string groupIconPath;
-            public VRCExpressionsMenu groupRootMenu;
-            public VRCExpressionsMenu mergeMenu;
+            public string groupRootMenuPath;
+            public string mergeMenuPath;
             public bool exclusiveMode;
             public bool blendTreeMode;
             public bool allowDisableAll;
@@ -2244,8 +2244,8 @@ namespace okitsu.net.SimpleToggleGenerator
                 isSettingsFoldout = group.isSettingFoldout != null ? new List<bool>(group.isSettingFoldout) : new List<bool>();
                 groupName = group.groupName;
                 groupIconPath = group.groupIcon != null ? AssetDatabase.GetAssetPath(group.groupIcon) : string.Empty;
-                groupRootMenu = group.groupRootMenu;
-                mergeMenu = group.mergeMenu;
+                groupRootMenuPath = group.groupRootMenu != null ? AssetDatabase.GetAssetPath(group.groupRootMenu) : string.Empty;
+                mergeMenuPath = group.mergeMenu != null ? AssetDatabase.GetAssetPath(group.mergeMenu) : string.Empty;
                 exclusiveMode = group.exclusiveMode;
                 blendTreeMode = group.blendTreeMode;
                 allowDisableAll = group.allowDisableAll;
@@ -2281,8 +2281,8 @@ namespace okitsu.net.SimpleToggleGenerator
                     isSettingFoldout = new List<bool>(isSettingsFoldout),
                     groupName = groupName,
                     groupIcon = !string.IsNullOrEmpty(groupIconPath) ? AssetDatabase.LoadAssetAtPath<Texture2D>(groupIconPath) : null,
-                    groupRootMenu = groupRootMenu,
-                    mergeMenu = mergeMenu,
+                    groupRootMenu = !string.IsNullOrEmpty(groupRootMenuPath) ? AssetDatabase.LoadAssetAtPath<VRCExpressionsMenu>(groupRootMenuPath) : null,
+                    mergeMenu = !string.IsNullOrEmpty(mergeMenuPath) ? AssetDatabase.LoadAssetAtPath<VRCExpressionsMenu>(mergeMenuPath) : null,
                     exclusiveMode = exclusiveMode,
                     blendTreeMode = blendTreeMode,
                     allowDisableAll = allowDisableAll,
