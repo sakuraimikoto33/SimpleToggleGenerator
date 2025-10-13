@@ -35,6 +35,7 @@ namespace okitsu.net.SimpleToggleGenerator
             public List<Texture2D> propIcon = new();
             public List<string> customName = new();
             public List<string> parameterName = new();
+            [NonSerialized] public List<GameObject> lastGameObjectOrder;
             [NonSerialized] public UnityEditorInternal.ReorderableList reorderableList;
         }
 
@@ -750,6 +751,55 @@ namespace okitsu.net.SimpleToggleGenerator
                     }
 
                     EditorGUI.indentLevel--;
+                }
+            };
+
+            // オブジェクト並び替え時に元の設定を保持する
+            group.reorderableList.onSelectCallback = (UnityEditorInternal.ReorderableList list) =>
+            {
+                group.lastGameObjectOrder = new List<GameObject>(group.gameObject);
+            };
+
+            group.reorderableList.onReorderCallback = (UnityEditorInternal.ReorderableList list) =>
+            {
+                if (group.lastGameObjectOrder == null || group.lastGameObjectOrder.Count == 0)
+                {
+                    return;
+                }
+
+                try
+                {
+                    var newGameObjects = group.gameObject.ToList();
+
+                    List<T> ReorderList<T>(List<T> source, Func<GameObject, int> indexOf)
+                    {
+                        var result = new List<T>(newGameObjects.Count);
+                        for (int i = 0; i < newGameObjects.Count; i++)
+                        {
+                            var g = newGameObjects[i];
+                            int oldIndex = group.lastGameObjectOrder.IndexOf(g);
+                            if (oldIndex >= 0 && oldIndex < source.Count)
+                                result.Add(source[oldIndex]);
+                            else
+                                result.Add(default);
+                        }
+                        return result;
+                    }
+
+                    group.save = ReorderList(group.save, go => group.lastGameObjectOrder.IndexOf(go));
+                    group.sync = ReorderList(group.sync, go => group.lastGameObjectOrder.IndexOf(go));
+                    group.propIcon = ReorderList(group.propIcon, go => group.lastGameObjectOrder.IndexOf(go));
+                    group.customName = ReorderList(group.customName, go => group.lastGameObjectOrder.IndexOf(go));
+                    group.parameterName = ReorderList(group.parameterName, go => group.lastGameObjectOrder.IndexOf(go));
+                    group.isSettingFoldout = ReorderList(group.isSettingFoldout, go => group.lastGameObjectOrder.IndexOf(go));
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("Failed to reorder parallel lists: " + ex.Message);
+                }
+                finally
+                {
+                    group.lastGameObjectOrder = null;
                 }
             };
 
